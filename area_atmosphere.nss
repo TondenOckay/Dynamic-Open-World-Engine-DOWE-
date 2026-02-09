@@ -3,6 +3,8 @@
     VERSION: 2.0 (Master Build)
     PLATFORM: Neverwinter Nights: Enhanced Edition (NWN:EE)
     MODULE: area_atmosphere_shrink
+    DESCRIPTION: Manages environmental visuals (Lighting/Weather) and the 
+                 DOWE "Shrink" factor (0.33f) for world-scale consistency.
     
     PILLARS:
     1. Environmental Reactivity (Climate/Terrain/Scale)
@@ -17,6 +19,8 @@
    ============================================================================
 */
 
+// No 2das required for this specific script logic.
+
 #include "area_debug_inc"
 
 // =============================================================================
@@ -27,71 +31,53 @@ const float SCALE_FACTOR = 0.33f;
 const float MCT_DELAY    = 6.0f;
 
 // =============================================================================
-// --- PROTOTYPES ---
+// --- PHASE 4: THE VISUAL BRAIN (Lighting) ---
 // =============================================================================
 
-void ATM_ApplyWeather();
-void ATM_ApplyLighting();
-
-/** * ATM_ApplyScaleEngine:
- * Iterates through all creatures and applies the DOWE 0.33 shrink factor.
- * Uses MCT 6.0s Delay for persistence of summons/pets/spawns.
+/** * ATM_ApplyLighting:
+ * Adjusts fog and lighting based on the current world clock.
  */
-void ATM_ApplyScaleEngine(object oArea);
-
-// =============================================================================
-// --- PHASE 6: THE SCALE ENGINE (PERSISTENCE LOOP) ---
-// =============================================================================
-
-void ATM_ApplyScaleEngine(object oArea)
+void ATM_ApplyLighting(object oArea)
 {
-    // --- PHASE 6.1: PC PRESENCE SENSOR ---
-    // Optimization for Pillar 3: Scalability. Shut down if area is empty.
-    
-    int bPlayerFound = FALSE;
-    object oPC = GetFirstPC();
-    while (GetIsObjectValid(oPC))
+    int nHour = GetTimeHour();
+
+    // Night cycle: 10 PM to 5 AM
+    if (nHour >= 22 || nHour <= 5)
     {
-        if (GetArea(oPC) == oArea) { bPlayerFound = TRUE; break; }
-        oPC = GetNextPC();
+        SetFogColor(FOG_TYPE_ALL, 0, oArea);
+        SetFogAmount(FOG_TYPE_ALL, 40, oArea);
+    }
+    else // Day cycle
+    {
+        SetFogColor(FOG_TYPE_ALL, 8421504, oArea);
+        SetFogAmount(FOG_TYPE_ALL, 10, oArea);
     }
 
-    if (!bPlayerFound) return;
+    RecomputeStaticLighting(oArea);
 
-    // --- PHASE 6.2: CREATURE ITERATION ---
-    // Targets: Players, Pets, Summons, Henchmen, and DSE v7.0 Spawns.
-
-    object oTarget = GetFirstObjectInArea(oArea);
-    while (GetIsObjectValid(oTarget))
+    if (GetLocalInt(GetModule(), "DSE_DEBUG_ACTIVE"))
     {
-        if (GetObjectType(oTarget) == OBJECT_TYPE_CREATURE)
-        {
-            // Only apply transform if current scale differs from target.
-            if (GetVisualTransform(oTarget, OBJECT_VISUAL_TRANSFORM_SCALE) != SCALE_FACTOR)
-            {
-                SetObjectVisualTransform(oTarget, OBJECT_VISUAL_TRANSFORM_SCALE, SCALE_FACTOR);
-            }
-        }
-        oTarget = GetNextObjectInArea(oArea);
+        SendMessageToPC(GetFirstPC(), "ATM-LIGHTING: Visual recomputation complete for Hour: " + IntToString(nHour));
     }
-
-    // --- PHASE 6.3: MCT PERSISTENCE ---
-    // Re-queue the loop to catch new summons/spawns.
-    
-    DelayCommand(MCT_DELAY, ATM_ApplyScaleEngine(oArea));
 }
 
 // =============================================================================
-// --- PHASE 5: THE CLIMATE ENGINE ---
+// --- PHASE 5: THE CLIMATE ENGINE (Weather) ---
 // =============================================================================
 
-void ATM_ApplyWeather()
+/** * ATM_ApplyWeather:
+ * Synchronizes NWN Weather with the DOWE Calendar months.
+ */
+void ATM_ApplyWeather(object oArea)
 {
     int nMonth = GetCalendarMonth();
 
-    if (nMonth >= 6 && nMonth <= 8)      SetWeather(OBJECT_SELF, WEATHER_RAIN);
-    else if (nMonth == 12 || nMonth <= 2) SetWeather(OBJECT_SELF, WEATHER_SNOW);
-    else                                 SetWeather(OBJECT_SELF, WEATHER_CLEAR);
+    // Summer Rains (June - August)
+    if (nMonth >= 6 && nMonth <= 8)       SetWeather(oArea, WEATHER_RAIN);
+    // Winter Snows (December - February)
+    else if (nMonth == 12 || nMonth <= 2) SetWeather(oArea, WEATHER_SNOW);
+    // Clear Skies (Spring/Fall)
+    else                                  SetWeather(oArea, WEATHER_CLEAR);
 
     if (GetLocalInt(GetModule(), "DSE_DEBUG_ACTIVE"))
     {
@@ -100,30 +86,55 @@ void ATM_ApplyWeather()
 }
 
 // =============================================================================
-// --- PHASE 4: THE VISUAL BRAIN ---
+// --- PHASE 6: THE SCALE ENGINE (PERSISTENCE LOOP) ---
 // =============================================================================
 
-void ATM_ApplyLighting()
+/** * ATM_ApplyScaleEngine:
+ * Iterates through all creatures and applies the DOWE 0.33 shrink factor.
+ * Uses Phase-Staggering (0.1s intervals) to protect CPU during mass-spawns.
+ */
+void ATM_ApplyScaleEngine(object oArea)
 {
-    int nHour = GetTimeHour();
-
-    if (nHour >= 22 || nHour <= 5)
+    // --- PHASE 6.1: PC PRESENCE SENSOR ---
+    // Optimization: If no players are in the area, kill the recursive loop.
+    int bPlayerFound = FALSE;
+    object oPC = GetFirstPC();
+    while (GetIsObjectValid(oPC))
     {
-        SetFogColor(FOG_TYPE_ALL, 0);
-        SetFogAmount(FOG_TYPE_ALL, 40);
-    }
-    else
-    {
-        SetFogColor(FOG_TYPE_ALL, 8421504);
-        SetFogAmount(FOG_TYPE_ALL, 10);
+        if (GetArea(oPC) == oArea) { bPlayerFound = TRUE; break; }
+        oPC = GetNextPC();
     }
 
-    RecomputeStaticLighting(OBJECT_SELF);
-
-    if (GetLocalInt(GetModule(), "DSE_DEBUG_ACTIVE"))
+    if (!bPlayerFound) 
     {
-        SendMessageToPC(GetFirstPC(), "ATM-LIGHTING: Visual recomputation complete for Hour: " + IntToString(nHour));
+        if (GetLocalInt(GetModule(), "DSE_DEBUG_ACTIVE"))
+            SendMessageToPC(GetFirstPC(), "ATM-SCALE: No players found. Scale loop hibernating for " + GetName(oArea));
+        return;
     }
+
+    // --- PHASE 6.2: STAGGERED CREATURE ITERATION ---
+    float fStagger = 0.0f;
+    object oTarget = GetFirstObjectInArea(oArea);
+    
+    while (GetIsObjectValid(oTarget))
+    {
+        if (GetObjectType(oTarget) == OBJECT_TYPE_CREATURE)
+        {
+            // Only apply if current scale differs from target.
+            if (GetVisualTransform(oTarget, OBJECT_VISUAL_TRANSFORM_SCALE) != SCALE_FACTOR)
+            {
+                // STAGGER: We delay the visual transform slightly for each creature
+                // to prevent a massive CPU spike on one frame.
+                DelayCommand(fStagger, SetObjectVisualTransform(oTarget, OBJECT_VISUAL_TRANSFORM_SCALE, SCALE_FACTOR));
+                fStagger += 0.05f; 
+            }
+        }
+        oTarget = GetNextObjectInArea(oArea);
+    }
+
+    // --- PHASE 6.3: MCT PERSISTENCE ---
+    // Re-queue the loop to catch new summons/spawns/logins.
+    DelayCommand(MCT_DELAY, ATM_ApplyScaleEngine(oArea));
 }
 
 // =============================================================================
@@ -145,13 +156,18 @@ void main()
 
     // --- PHASE 0.3: EXECUTION PIPELINE ---
     
-    ATM_ApplyLighting();    // Phase 4
-    ATM_ApplyWeather();     // Phase 5
+    // Immediate Visual Updates
+    ATM_ApplyLighting(oArea);    // Phase 4
+    ATM_ApplyWeather(oArea);     // Phase 5
     
-    // Only trigger the recursive Scale Engine if a PC is entering.
-    if (GetIsPC(GetEnteringObject()))
+    // Phase 6 logic: Trigger scale engine. 
+    // We check GetEnteringObject for OnAreaEnter, 
+    // or run anyway if triggered by the Heartbeat/Module.
+    object oEnter = GetEnteringObject();
+    
+    if (!GetIsObjectValid(oEnter) || GetIsPC(oEnter))
     {
-        ATM_ApplyScaleEngine(oArea); // Phase 6
+        ATM_ApplyScaleEngine(oArea); 
     }
 
     // --- PHASE 0.4: FINAL LOGGING ---
