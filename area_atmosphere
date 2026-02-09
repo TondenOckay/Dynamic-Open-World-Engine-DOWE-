@@ -1,3 +1,18 @@
+/* ============================================================================
+    PROJECT: Dynamic Open World Engine (DOWE)
+    VERSION: 2.0 (Master Build)
+    MODULE: area_atmosphere
+    
+    DESCRIPTION:
+    [Brief summary of script role]
+    
+    ENGINE PILLARS:
+    1. Environmental Reactivity (Climate/Terrain)
+    2. Biological Persistence (Hunger/Thirst/Fatigue)
+    3. Optimized Scalability (480-Player Phase-Staggering)
+    4. Intelligent Population (Dynamic Spawning)
+    ============================================================================
+*/
 // =============================================================================
 // LNS ENGINE: area_atmosphere (Version 7.0 - FULL ANNOTATED MASTER)
 // Logic: Atmospheric Engine (Dynamic Lighting & Weather)
