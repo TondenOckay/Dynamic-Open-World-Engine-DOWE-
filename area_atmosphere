@@ -4,7 +4,10 @@
     MODULE: area_atmosphere
     
     DESCRIPTION:
-    [Brief summary of script role]
+    LNS ENGINE: area_atmosphere (Version 7.0 - FULL ANNOTATED MASTER)
+    Logic: Atmospheric Engine (Dynamic Lighting & Weather)
+    Purpose: Sets area mood based on time/season when VIPs enter.
+    Standard: 350+ Lines (Professional Vertical Breathing & Full Debug Tracers)
     
     ENGINE PILLARS:
     1. Environmental Reactivity (Climate/Terrain)
@@ -12,15 +15,7 @@
     3. Optimized Scalability (480-Player Phase-Staggering)
     4. Intelligent Population (Dynamic Spawning)
     ============================================================================
-*/
-// =============================================================================
-// LNS ENGINE: area_atmosphere (Version 7.0 - FULL ANNOTATED MASTER)
-// Logic: Atmospheric Engine (Dynamic Lighting & Weather)
-// Purpose: Sets area mood based on time/season when VIPs enter.
-// Standard: 350+ Lines (Professional Vertical Breathing & Full Debug Tracers)
-// =============================================================================
 
-/*
     CHANGE LOG:
     - [2026-02-07] STABILIZED: Removed oArea parameter from Fog functions for Legacy Sync.
     - [2026-02-07] STABILIZED: Re-implemented 350+ line professional vertical breathing.
