@@ -28,7 +28,7 @@ Every player is tracked via a VIP ID through the Area Manager.
 - The "Engine" Part: It handles "Recovery" (Short vs. Long rests) by scanning for player-created infrastructure like tents and campfires, making survival a social and tactical game.
 
 
-3. Optimized Scalability (The 480-Player Standard)
+3. Optimized Scalability
 
 Most engines fail when the player count rises. DOWE is built for a small army.
 - The Logic: It uses Phase-Staggered Logic. Instead of calculating everything for everyone at once, it breaks tasks into "pulses."
