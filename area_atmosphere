@@ -4,8 +4,7 @@
     MODULE: area_atmosphere
     
     DESCRIPTION:
-    LNS ENGINE: area_atmosphere (Version 7.0 - FULL ANNOTATED MASTER)
-    Logic: Atmospheric Engine (Dynamic Lighting & Weather)
+    Atmospheric Engine (Dynamic Lighting & Weather)
     Purpose: Sets area mood based on time/season when VIPs enter.
     Standard: 350+ Lines (Professional Vertical Breathing & Full Debug Tracers)
     
