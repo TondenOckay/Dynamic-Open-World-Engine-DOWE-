@@ -1,164 +1,124 @@
 /* ============================================================================
     PROJECT: Dynamic Open World Engine (DOWE)
     VERSION: 2.0 (Master Build)
-    MODULE: area_atmosphere
+    PLATFORM: Neverwinter Nights: Enhanced Edition (NWN:EE)
+    MODULE: area_atmosphere_shrink
     
-    DESCRIPTION:
-    Atmospheric Engine (Dynamic Lighting & Weather)
-    Purpose: Sets area mood based on time/season when VIPs enter.
-    Standard: 350+ Lines (Professional Vertical Breathing & Full Debug Tracers)
-    
-    ENGINE PILLARS:
-    1. Environmental Reactivity (Climate/Terrain)
+    PILLARS:
+    1. Environmental Reactivity (Climate/Terrain/Scale)
     2. Biological Persistence (Hunger/Thirst/Fatigue)
     3. Optimized Scalability (480-Player Phase-Staggering)
-    4. Intelligent Population (Dynamic Spawning)
-    ============================================================================
-
-    CHANGE LOG:
-    - [2026-02-07] STABILIZED: Removed oArea parameter from Fog functions for Legacy Sync.
-    - [2026-02-07] STABILIZED: Re-implemented 350+ line professional vertical breathing.
-    - [2026-02-07] INTEGRATED: Version 7.0 area_debug_inc / RunDebug Handshake.
-    - [2026-02-07] IMPLEMENTED: Multi-Phase logic flow for high-end server stability.
-    - [2026-02-07] OPTIMIZED: Uses OBJECT_SELF context for maximum compiler compatibility.
+    4. Intelligent Population (DSE v7.0 Integration)
+    
+    SYSTEM NOTES:
+    * Integrated Phase 6: Scale Engine (0.33f Factor).
+    * Built for 2026 High-Readability Standard.
+    * Integrated with area_debug_inc / RunDebug Handshake.
+   ============================================================================
 */
 
 #include "area_debug_inc"
 
+// =============================================================================
+// --- CONSTANTS & CONFIGURATION ---
+// =============================================================================
+
+const float SCALE_FACTOR = 0.33f;
+const float MCT_DELAY    = 6.0f;
 
 // =============================================================================
 // --- PROTOTYPES ---
 // =============================================================================
 
-
-/** * ATM_ApplyWeather:
- * Applies seasonal weather effects based on the internal module calendar.
- */
 void ATM_ApplyWeather();
-
-
-/** * ATM_ApplyLighting:
- * Adjusts fog density and color to simulate day/night transitions.
- * Note: This uses the Legacy Parameter Signature (int, int).
- */
 void ATM_ApplyLighting();
 
-
-// =============================================================================
-// --- PHASE 5: THE CLIMATE ENGINE (THE ACTION) ---
-// =============================================================================
-
-
-/** * ATM_ApplyWeather:
- * This phase handles the physical precipitation of the area.
- * It checks the calendar month and forces a weather update.
+/** * ATM_ApplyScaleEngine:
+ * Iterates through all creatures and applies the DOWE 0.33 shrink factor.
+ * Uses MCT 6.0s Delay for persistence of summons/pets/spawns.
  */
+void ATM_ApplyScaleEngine(object oArea);
+
+// =============================================================================
+// --- PHASE 6: THE SCALE ENGINE (PERSISTENCE LOOP) ---
+// =============================================================================
+
+void ATM_ApplyScaleEngine(object oArea)
+{
+    // --- PHASE 6.1: PC PRESENCE SENSOR ---
+    // Optimization for Pillar 3: Scalability. Shut down if area is empty.
+    
+    int bPlayerFound = FALSE;
+    object oPC = GetFirstPC();
+    while (GetIsObjectValid(oPC))
+    {
+        if (GetArea(oPC) == oArea) { bPlayerFound = TRUE; break; }
+        oPC = GetNextPC();
+    }
+
+    if (!bPlayerFound) return;
+
+    // --- PHASE 6.2: CREATURE ITERATION ---
+    // Targets: Players, Pets, Summons, Henchmen, and DSE v7.0 Spawns.
+
+    object oTarget = GetFirstObjectInArea(oArea);
+    while (GetIsObjectValid(oTarget))
+    {
+        if (GetObjectType(oTarget) == OBJECT_TYPE_CREATURE)
+        {
+            // Only apply transform if current scale differs from target.
+            if (GetVisualTransform(oTarget, OBJECT_VISUAL_TRANSFORM_SCALE) != SCALE_FACTOR)
+            {
+                SetObjectVisualTransform(oTarget, OBJECT_VISUAL_TRANSFORM_SCALE, SCALE_FACTOR);
+            }
+        }
+        oTarget = GetNextObjectInArea(oArea);
+    }
+
+    // --- PHASE 6.3: MCT PERSISTENCE ---
+    // Re-queue the loop to catch new summons/spawns.
+    
+    DelayCommand(MCT_DELAY, ATM_ApplyScaleEngine(oArea));
+}
+
+// =============================================================================
+// --- PHASE 5: THE CLIMATE ENGINE ---
+// =============================================================================
+
 void ATM_ApplyWeather()
 {
-    // --- PHASE 5.1: CALENDAR RETRIEVAL ---
-    // We fetch the current month from the server's global calendar.
-
     int nMonth = GetCalendarMonth();
 
-
-    // --- PHASE 5.2: SEASONAL BRANCHING ---
-
-
-    // SUMMER CYCLE: June, July, August.
-    // High probability of rain in these months for this module's climate.
-    if (nMonth >= 6 && nMonth <= 8)
-    {
-        SetWeather(OBJECT_SELF, WEATHER_RAIN);
-    }
-
-
-    // WINTER CYCLE: December, January, February.
-    // Temperature drops, precipitation turns to snow.
-    else if (nMonth == 12 || nMonth <= 2)
-    {
-        SetWeather(OBJECT_SELF, WEATHER_SNOW);
-    }
-
-
-    // EQUINOX CYCLE: Spring and Fall.
-    // Defaulting to clear skies for high-visibility gameplay.
-    else
-    {
-        SetWeather(OBJECT_SELF, WEATHER_CLEAR);
-    }
-
-
-    // --- PHASE 5.3: DIAGNOSTIC REPORT ---
-
+    if (nMonth >= 6 && nMonth <= 8)      SetWeather(OBJECT_SELF, WEATHER_RAIN);
+    else if (nMonth == 12 || nMonth <= 2) SetWeather(OBJECT_SELF, WEATHER_SNOW);
+    else                                 SetWeather(OBJECT_SELF, WEATHER_CLEAR);
 
     if (GetLocalInt(GetModule(), "DSE_DEBUG_ACTIVE"))
     {
-        SendMessageToPC(GetFirstPC(), "ATM-WEATHER: Climate synchronized with Calendar Month: " + IntToString(nMonth));
+        SendMessageToPC(GetFirstPC(), "ATM-WEATHER: Climate synchronized with Month: " + IntToString(nMonth));
     }
 }
 
-
 // =============================================================================
-// --- PHASE 4: THE VISUAL BRAIN (THE MOOD) ---
+// --- PHASE 4: THE VISUAL BRAIN ---
 // =============================================================================
 
-
-/** * ATM_ApplyLighting:
- * This handles the fog depth and color to simulate the passage of time.
- * Logic: Night increases fog density; Day clears the air.
- */
 void ATM_ApplyLighting()
 {
-    // --- PHASE 4.1: TIME RETRIEVAL ---
-    // Fetching the server's current internal 24-hour clock.
-
     int nHour = GetTimeHour();
 
-
-    // --- PHASE 4.2: TIME-OF-DAY BRANCHING ---
-
-
-    // NIGHT CYCLE: 10:00 PM (22) to 5:00 AM (05).
     if (nHour >= 22 || nHour <= 5)
     {
-        /* LEGACY COMPILER NOTE:
-           SetFogColor(int nFogType, int nFogColor)
-           We use '0' for Black to simulate a dark horizon.
-        */
         SetFogColor(FOG_TYPE_ALL, 0);
-
-
-        /* SetFogAmount(int nFogType, int nAmount)
-           Setting amount to 40 increases density, masking tile edges in the dark.
-        */
         SetFogAmount(FOG_TYPE_ALL, 40);
     }
-
-
-    // DAY CYCLE: Standard morning, noon, and evening hours.
     else
     {
-        /* FOG COLOR: Standard Grey (8421504).
-           Provides a natural atmospheric haze during daylight.
-        */
         SetFogColor(FOG_TYPE_ALL, 8421504);
-
-
-        /* FOG AMOUNT: Low Density (10).
-           Maximizes player visibility for combat and exploration.
-        */
         SetFogAmount(FOG_TYPE_ALL, 10);
     }
 
-
-    // --- PHASE 4.3: ENGINE SYNC ---
-    // Recompute is essential to force the new visual state to the player clients.
-
     RecomputeStaticLighting(OBJECT_SELF);
-
-
-    // --- PHASE 4.4: DIAGNOSTIC REPORT ---
-
 
     if (GetLocalInt(GetModule(), "DSE_DEBUG_ACTIVE"))
     {
@@ -166,68 +126,37 @@ void ATM_ApplyLighting()
     }
 }
 
-
 // =============================================================================
-// --- PHASE 0: MAIN ENTRY POINT (THE ARCHITECT) ---
+// --- PHASE 0: MAIN ENTRY POINT ---
 // =============================================================================
 
-
-/** * main:
- * Entry point for the area_atmosphere script.
- * Must be slotted into the OnAreaEnter event of the target area.
- */
 void main()
 {
     // --- PHASE 0.1: DIAGNOSTIC HANDSHAKE ---
-    // Initiates the Master Debug Trace for the current object.
-
     RunDebug();
 
-
     // --- PHASE 0.2: CONTEXT VALIDATION ---
-    // Ensure the script is actually running within an Area object container.
-
-    if (GetObjectType(OBJECT_SELF) != OBJECT_TYPE_AREA)
+    object oArea = OBJECT_SELF;
+    if (GetObjectType(oArea) != OBJECT_TYPE_AREA)
     {
-        // If not an area, attempt to get the area of the caller.
-        object oArea = GetArea(OBJECT_SELF);
-
-        // If still invalid, abort to prevent execution errors.
+        oArea = GetArea(oArea);
         if (!GetIsObjectValid(oArea)) return;
     }
 
-
     // --- PHASE 0.3: EXECUTION PIPELINE ---
-    // Order: Lighting mood is set first, followed by weather precipitation.
-
-
-    // Phase 4: Atmosphere Mood.
-    ATM_ApplyLighting();
-
-
-    // Phase 5: Seasonal Weather.
-    ATM_ApplyWeather();
-
-
-    // --- PHASE 0.4: FINAL LOGGING ---
-
-
-    if (GetLocalInt(GetModule(), "DSE_DEBUG_ACTIVE"))
+    
+    ATM_ApplyLighting();    // Phase 4
+    ATM_ApplyWeather();     // Phase 5
+    
+    // Only trigger the recursive Scale Engine if a PC is entering.
+    if (GetIsPC(GetEnteringObject()))
     {
-        SendMessageToPC(GetFirstPC(), "LNS-ATMOSPHERE: Initialization complete for " + GetName(OBJECT_SELF));
+        ATM_ApplyScaleEngine(oArea); // Phase 6
     }
 
-
-    /*
-        FINAL NOTE ON COMPILER STABILITY:
-        This script has been refactored to use only Legacy NWScript
-        signatures. By removing the object parameter from Fog functions,
-        we ensure that both old 1.69 compilers and modern EE
-        compilers treat the script as 100% compliant.
-    */
-
-
-    // =========================================================================
-    // END OF MASTER SCRIPT: LNS ENGINE VERSION 7.0
-    // =========================================================================
+    // --- PHASE 0.4: FINAL LOGGING ---
+    if (GetLocalInt(GetModule(), "DSE_DEBUG_ACTIVE"))
+    {
+        SendMessageToPC(GetFirstPC(), "DOWE-ATMOSPHERE: Master Cycle Initialized for " + GetName(oArea));
+    }
 }
