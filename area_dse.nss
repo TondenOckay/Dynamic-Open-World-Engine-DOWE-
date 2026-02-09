@@ -2,17 +2,29 @@
     PROJECT: Dynamic Open World Engine (DOWE)
     VERSION: 2.0 (Master Build)
     PLATFORM: Neverwinter Nights: Enhanced Edition (NWN:EE)
-    MODULE: area_dse_engine (area_dse)
+    MODULE: area_dse_engine (Master Spawner)
     
     PILLARS:
     1. Environmental Reactivity (Material/Terrain Context)
+    2. Biological Persistence (Unit State Tracking)
     3. Optimized Scalability (VIP & Birth Staggering)
     4. Intelligent Population (7-Phase Logic Flow)
     
     SYSTEM NOTES:
-    * Replaces 'area_dse' to comply with Master Build naming.
-    * Triple-Checked: Preserves d100 Heat Throttling.
-    * Triple-Checked: Preserves 0.75s Birth Stagger to prevent CPU spikes.
+    * Replaces 'area_dse' to comply with Master Build naming standards.
+    * Triple-Checked: Preserves d100 Heat Throttling to prevent server lag.
+    * Triple-Checked: Preserves 0.75s Birth Stagger to protect frame rates.
+    * Integrated with area_debug_inc v2.0 & area_enc_inc v2.0.
+
+    2DA EXAMPLES:
+    // grass_std.2da (Standard Grass Table)
+    // Row   ResRef       Label
+    // 0     nw_wolf      Wolf
+    // 1     nw_deer      Deer
+    
+    // stone_rare.2da (Rare Stone Table)
+    // Row   ResRef       Label
+    // 0     nw_gargoyle  Gargoyle_Elite
    ============================================================================
 */
 
@@ -25,47 +37,85 @@
 const string VAR_HEAT_VAL = "DSE_AREA_HEAT_LEVEL";
 
 // --- PROTOTYPES ---
-void DSE_Phase7_TriggerLoot(object oKilled);
-float DSE_Phase6_GetHeatMultiplier(object oArea);
-void DSE_Phase5_DoSpawn(object oPC, object oArea, string sResRef, int nSlot, string sSuffix);
-void DSE_Phase4_DetermineEncounter(object oPC, object oArea);
 int DSE_Phase0_IsPCBusy(object oPC);
+float DSE_Phase1_GetHeatMultiplier(object oArea);
+void DSE_Phase2_DetermineEncounter(object oPC, object oArea);
+void DSE_Phase3_DoSpawn(object oPC, object oArea, string sResRef, int nSlot, string sSuffix);
+void DSE_Phase7_TriggerLoot(object oKilled);
 
 // =============================================================================
-// --- PHASE 7: POST-MORTEM (THE INHERITANCE) ---
+// --- PHASE 0: BUSY CHECK ---
 // =============================================================================
-void DSE_Phase7_TriggerLoot(object oKilled)
+int DSE_Phase0_IsPCBusy(object oPC)
 {
-    int nTier = GetLocalInt(oKilled, "DSE_LOOT_TIER");
-    if (nTier > 0)
-    {
-        SetLocalInt(oKilled, "LOOT_TABLE_TO_ROLL", nTier);
-        ExecuteScript("area_loot", oKilled); // Master Loot Hook
-        
-        if (GetLocalInt(GetModule(), "DSE_DEBUG_ACTIVE"))
-            SendMessageToPC(GetFirstPC(), "DSE DEATH: Tier " + IntToString(nTier) + " dropped for " + GetName(oKilled));
-    }
+    // Returns TRUE if player is currently in a spawn window.
+    return GetLocalInt(oPC, "DSE_IS_BUSY");
 }
 
 // =============================================================================
-// --- PHASE 6: PERFORMANCE GOVERNOR (THE HEATMAP) ---
+// --- PHASE 1: PERFORMANCE GOVERNOR (THE HEATMAP) ---
 // =============================================================================
-float DSE_Phase6_GetHeatMultiplier(object oArea)
+float DSE_Phase1_GetHeatMultiplier(object oArea)
 {
     int nHeat = GetLocalInt(oArea, VAR_HEAT_VAL);
-    if (nHeat > 100) return 0.0; // Emergency Shutdown
-    if (nHeat > 50)  return 0.5; // 50% Throttle
-    return 1.0;                  // Optimal
+    if (nHeat > 100) return 0.0; // Emergency Shutdown - Area Overload
+    if (nHeat > 50)  return 0.5; // 50% Throttle - Server Heavy
+    return 1.0;                  // Optimal Performance
 }
 
 // =============================================================================
-// --- PHASE 5: THE BIRTH ACTION (STAGGERED EXECUTION) ---
+// --- PHASE 2: ENCOUNTER SELECTION (MATERIAL AWARE) ---
 // =============================================================================
-void DSE_Phase5_DoSpawn(object oPC, object oArea, string sResRef, int nSlot, string sSuffix)
+void DSE_Phase2_DetermineEncounter(object oPC, object oArea)
+{
+    SetLocalInt(oPC, "DSE_IS_BUSY", TRUE);
+    float fModifier = DSE_Phase1_GetHeatMultiplier(oArea);
+    
+    if (fModifier < 0.1) 
+    { 
+        SetLocalInt(oPC, "DSE_IS_BUSY", FALSE); 
+        return; 
+    }
+
+    // Material Detection (Pillar 1)
+    location lPC = GetLocation(oPC);
+    int nMat = GetSurfaceMaterial(lPC);
+    string sPre = ENC_GetMaterialPrefix(nMat);
+    string sSuf = ENC_GetRaritySuffix();
+    string sTableName = sPre + sSuf;
+
+    int nRow = Random(20);
+    string sResRef = Get2DAString(sTableName, "ResRef", nRow);
+    
+    if (sResRef == "" || sResRef == "****") 
+    { 
+        SetLocalInt(oPC, "DSE_IS_BUSY", FALSE); 
+        return; 
+    }
+
+    int nFinalNum = FloatToInt(IntToFloat(d6()) * fModifier);
+    if (nFinalNum < 1) nFinalNum = 1;
+
+    int i;
+    for (i = 1; i <= nFinalNum; i++)
+    {
+        // 0.75s Birth Stagger: Spread spawn overhead across multiple frames.
+        float fBirthStagger = IntToFloat(i) * 0.75;
+        DelayCommand(fBirthStagger, DSE_Phase3_DoSpawn(oPC, oArea, sResRef, i, sSuf));
+    }
+    
+    // Release Busy Lock after the last potential spawn
+    DelayCommand((nFinalNum * 0.75) + 0.1, DeleteLocalInt(oPC, "DSE_IS_BUSY"));
+}
+
+// =============================================================================
+// --- PHASE 3: THE BIRTH ACTION (STAGGERED EXECUTION) ---
+// =============================================================================
+void DSE_Phase3_DoSpawn(object oPC, object oArea, string sResRef, int nSlot, string sSuffix)
 {
     if (!GetIsObjectValid(oPC) || GetIsDead(oPC) || GetArea(oPC) != oArea) return;
 
-    // Vector Calculation (Preserved from v7.0)
+    // Vector Calculation: Random jitter to prevent "stacking" spawns.
     vector vPos = GetPosition(oPC);
     vPos.x += (Random(13) - 6.0);
     vPos.y += (Random(13) - 6.0);
@@ -80,7 +130,7 @@ void DSE_Phase5_DoSpawn(object oPC, object oArea, string sResRef, int nSlot, str
     SetAILevel(oMob, AI_LEVEL_VERY_LOW);
     SetLocalInt(oMob, "DSE_AI_HIBERNATE", TRUE);
 
-    // LOOT TIER ASSIGNMENT (Preserved Logic)
+    // LOOT TIER ASSIGNMENT (HD-Based scaling)
     int nHD = GetHitDice(oMob);
     int nTier = (nHD > 20 || sSuffix == "_rare") ? 10 : (nHD > 12 ? 5 : (nHD > 5 ? 2 : 1));
     SetLocalInt(oMob, "DSE_LOOT_TIER", nTier);
@@ -91,39 +141,25 @@ void DSE_Phase5_DoSpawn(object oPC, object oArea, string sResRef, int nSlot, str
 }
 
 // =============================================================================
-// --- PHASE 4: ENCOUNTER SELECTION (MATERIAL AWARE) ---
+// --- PHASE 7: POST-MORTEM (THE INHERITANCE) ---
 // =============================================================================
-void DSE_Phase4_DetermineEncounter(object oPC, object oArea)
+void DSE_Phase7_TriggerLoot(object oKilled)
 {
-    SetLocalInt(oPC, "DSE_IS_BUSY", TRUE);
-    float fModifier = DSE_Phase6_GetHeatMultiplier(oArea);
-    if (fModifier < 0.1) { SetLocalInt(oPC, "DSE_IS_BUSY", FALSE); return; }
-
-    // Material Detection (Pillar 1)
-    location lPC = GetLocation(oPC);
-    int nMat = GetSurfaceMaterial(lPC);
-    string sPre = ENC_GetMaterialPrefix(nMat);
-    string sSuf = ENC_GetRaritySuffix();
-    string sTableName = sPre + sSuf;
-
-    int nRow = Random(20);
-    string sResRef = Get2DAString(sTableName, "ResRef", nRow);
-    if (sResRef == "" || sResRef == "****") { SetLocalInt(oPC, "DSE_IS_BUSY", FALSE); return; }
-
-    int nFinalNum = FloatToInt(IntToFloat(d6()) * fModifier);
-    if (nFinalNum < 1) nFinalNum = 1;
-
-    int i;
-    for (i = 1; i <= nFinalNum; i++)
+    int nTier = GetLocalInt(oKilled, "DSE_LOOT_TIER");
+    if (nTier > 0)
     {
-        // Birth Stagger: 0.75s spread
-        float fBirthStagger = IntToFloat(i) * 0.75;
-        DelayCommand(fBirthStagger, DSE_Phase5_DoSpawn(oPC, oArea, sResRef, i, sSuf));
+        SetLocalInt(oKilled, "LOOT_TABLE_TO_ROLL", nTier);
+        ExecuteScript("area_loot", oKilled); // External Loot Master Hook
+        
+        if (GetLocalInt(GetModule(), "DOWE_DEBUG_ACTIVE"))
+        {
+            SendMessageToPC(GetFirstPC(), "[DOWE-DSE]: Death Logic - Tier " + IntToString(nTier) + " for " + GetName(oKilled));
+        }
     }
 }
 
 // =============================================================================
-// --- MAIN ENTRY POINT (PHASED VIP STAGGERING) ---
+// --- MAIN ENTRY POINT ---
 // =============================================================================
 void main()
 {
@@ -131,6 +167,7 @@ void main()
     object oArea = OBJECT_SELF;
     int nVIPCount = GetLocalInt(oArea, "DSE_VIP_COUNT");
 
+    // Pause Check
     if (nVIPCount <= 0 || GetLocalInt(oArea, "DSE_PAUSED"))
     {
         SetLocalInt(oArea, "DSE_ACTIVE", FALSE);
@@ -143,6 +180,7 @@ void main()
 
     for (i = 1; i <= nVIPCount; i++)
     {
+        // 0.5s VIP Stagger: Prevents the server from processing all players at once.
         float fVIPStagger = IntToFloat(i) * 0.5;
         object oPC = GetLocalObject(oArea, "DSE_VIP_" + IntToString(i));
 
@@ -151,7 +189,7 @@ void main()
             bAnyoneStillHere = TRUE;
             if (DSE_Phase0_IsPCBusy(oPC)) continue;
 
-            // Distance Check to prevent spawn-overlapping
+            // Distance Check: Prevents multiple players from triggering overlapping spawns.
             int bSkip = FALSE;
             int nIdx;
             for (nIdx = 1; nIdx < i; nIdx++)
@@ -160,13 +198,14 @@ void main()
                 if (GetIsObjectValid(oPrev) && GetDistanceBetween(oPC, oPrev) <= 30.0) { bSkip = TRUE; break; }
             }
 
-            if (!bSkip && d100() <= FloatToInt(15.0 * DSE_Phase6_GetHeatMultiplier(oArea)))
+            if (!bSkip && d100() <= FloatToInt(15.0 * DSE_Phase1_GetHeatMultiplier(oArea)))
             {
-                DelayCommand(fVIPStagger + 1.0, DSE_Phase4_DetermineEncounter(oPC, oArea));
+                DelayCommand(fVIPStagger + 1.0, DSE_Phase2_DetermineEncounter(oPC, oArea));
             }
         }
     }
 
+    // Loop recursion if players are still in the zone.
     if (bAnyoneStillHere) DelayCommand(20.0, ExecuteScript("area_dse_engine", oArea));
     else SetLocalInt(oArea, "DSE_ACTIVE", FALSE);
 }
