@@ -1,6 +1,6 @@
 # Dynamic-Open-World-Engine-DOWE-
 The Technical Edge (For Devs)  If you're talking to a coder, tell them this:      "It’s a modular, 2DA-driven framework that decouples biological math from the main server loop. It utilizes a custom Odometer system for resting and a Tag-based effect system for movement, ensuring O(1) or O(log n) efficiency for most player-state updates."
-To describe the Dynamic Open World Engine (DOWE), I’d frame it as the "digital nervous system" of the server. It’s the difference between a static map where things just exist and a living environment that reacts to the presence of 480 players simultaneously.
+To describe the Dynamic Open World Engine (DOWE), I’d frame it as the "digital nervous system" of the server. It’s the difference between a static map where things just exist and a living environment that reacts to the presence of players simultaneously.
 
 Here is how I would break it down for a player or a fellow developer:
 The Core Definition
