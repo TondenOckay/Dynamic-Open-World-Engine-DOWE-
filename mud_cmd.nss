@@ -1,6 +1,6 @@
 /* ============================================================================
     PROJECT: Dynamic Open World Engine (DOWE)
-    VERSION: 2.1 (Master Build - Faction/Context Routing)
+    VERSION: 2.2 (Master Build - Faction/Switchboard Integrated)
     PLATFORM: Neverwinter Nights: Enhanced Edition (NWN:EE)
     MODULE: mud_cmd
     
@@ -11,13 +11,11 @@
     DESCRIPTION:
     The "Central Nervous System" for the DOWE MUD command suite. This script 
     intercepts player chat, identifies the intent via mud_cmd.2da, and 
-    pre-processes targeting requirements (Distance/NPC Tag). 
+    pre-processes targeting requirements. 
     
-    PHASE LOGIC:
-    1. Validation: Checks if the chat buffer is active.
-    2. Registry: Scans 2DA for the command keyword.
-    3. Context: Identifies the nearest NPC and validates SearchDist.
-    4. Delegation: Executes the specific handler script (ExecuteScript).
+    INTEGRATION:
+    * Connects to 'fact_engine' by checking DOWE_PRC_DENY.
+    * If the Faction Engine has flagged the PC as banned, routing is aborted.
     
     SYSTEM NOTES:
     * TRIPLE-CHECKED: Logic staggered by 0.1s to prevent frame-hitching.
@@ -86,7 +84,6 @@ void DOWE_CMD_ProcessCommand(object oPC, string sChat)
             float fMaxDist   = StringToFloat(Get2DAString("mud_cmd", "SearchDist", i));
             
             // PHASE 3: CONTEXT ACQUISITION (NPC Discovery)
-            // If the command requires an NPC (Social Commands), we locate them here.
             if (bNeedsTarget)
             {
                 object oNPC = GetNearestObject(OBJECT_TYPE_CREATURE, oPC);
@@ -98,6 +95,19 @@ void DOWE_CMD_ProcessCommand(object oPC, string sChat)
                     // Technical Annotation: Storing the target object so the handler
                     // script doesn't have to perform its own GetNearest scan.
                     SetLocalObject(oPC, "DOWE_CHAT_TARGET", oNPC);
+                    
+                    // --- PHASE 3.5: SOCIAL PLUG-IN RECONCILIATION ---
+                    // This block checks the 'stamps' left by fact_engine.
+                    // If the player is banned (NEMESIS/HATED), we stop here.
+                    int bIsBanned = GetLocalInt(oPC, "DOWE_PRC_DENY");
+                    if (bIsBanned == TRUE)
+                    {
+                        AssignCommand(oNPC, SpeakString("I don't do business with your kind. Be gone!"));
+                        CMD_Debug("SOCIAL REJECTION: PC is banned by Faction Engine.", oPC);
+                        DeleteLocalString(oPC, "DOWE_CHAT_BUFFER");
+                        return; // ABORT ROUTING
+                    }
+
                     CMD_Debug("Context Found: Targeting " + GetTag(oNPC), oPC);
                 }
                 else
