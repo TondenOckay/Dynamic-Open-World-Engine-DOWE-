@@ -5,128 +5,179 @@
     MODULE: the_conductor
     
     PILLARS:
-    1. Environmental Reactivity (Movement 3)
-    2. Biological Persistence (Movement 2)
+    1. Environmental Reactivity (Movement 3 Slot)
+    2. Biological Persistence (Movement 2 Slot)
     3. Optimized Scalability (480-Player Phase-Staggering)
-    4. Intelligent Population (Movement 1 - DSE v7.0)
+    4. Intelligent Population (Movement 1 Slot)
     
     DESCRIPTION:
-    The Conductor is the central engine timing script. It replaces the heavy 
-    OnHeartbeat with a precise 30.0s staggered DelayCommand cycle. It ensures 
-    that the "Big Three" systems (Spawns, Bio, Env) never execute simultaneously, 
-    maintaining server stability for 1000+ areas and 480 players.
+    The Conductor is the master timing engine for the Persistent World. 
+    It replaces standard OnHeartbeat logic with a 30.0s staggered cycle. 
+    It uses a "Variable Array" (Local String) lookup system, allowing you 
+    to plug in or pull out standalone packages (scripts) without ever 
+    re-opening or re-compiling this master script.
     
-    SYSTEM NOTES:
-    * Triple-Checked for 2026 High-Readability Standards.
-    * Uses 10.0s "Movement" offsets to eliminate Instruction Spikes.
-    * Integrated with DOWE Debug System (Tracer Logic).
+    TIMING ARCHITECTURE:
+    * Cycle Length: 30.0 Seconds
+    * Window 1 (0.0s): Population & Cleanup
+    * Window 2 (10.0s): PC Vitals & Biologicals (Phase-Staggered)
+    * Window 3 (20.0s): Weather & Environmental
    ============================================================================
 */
 
-// [2DA REFERENCE SECTION]
-// // These 2DAs are handled by the sub-scripts called by The Conductor.
-// // appearance.2da (Movement 1)
-// // vfx_internal.2da (Movement 3)
+/* // [VARIABLE ARRAY REFERENCE - SET THESE ON THE MODULE]
+// These variables act as the "Plugs" for the Standalone Packages.
+// Set these in your Switchboard or via the Toolset.
+
+// DOWE_PKG_POP_ACTIVE (int)    - TRUE to enable Spawning.
+// DOWE_PKG_POP_SCRIPT (string) - Name of Population script (e.g., "dse_engine_v7").
+// DOWE_PKG_BIO_ACTIVE (int)    - TRUE to enable Vitals.
+// DOWE_PKG_BIO_SCRIPT (string) - Name of Biological script (e.g., "dowe_bio_core").
+// DOWE_PKG_ENV_ACTIVE (int)    - TRUE to enable Weather.
+// DOWE_PKG_ENV_SCRIPT (string) - Name of Climate script (e.g., "dowe_env_core").
+*/
 
 // --- DOWE DEBUG SYSTEM ---
-// Sends high-value technical annotations to the first PC in the area.
+// Dense Annotation: This system allows the Conductor to "speak" to the developers.
+// It will only send messages if "DOWE_DEBUG_MODE" is set to TRUE on the Module.
 void DOWE_Debug(string sMsg, object oArea) {
     if (GetLocalInt(GetModule(), "DOWE_DEBUG_MODE") == TRUE) {
+        // Optimization: We locate the first PC in the area to receive the traffic log.
         object oPC = GetFirstObjectInArea(oArea);
         while(GetIsObjectValid(oPC)) {
             if(GetIsPC(oPC)) {
                 SendMessageToPC(oPC, " [CONDUCTOR] -> " + sMsg);
-                return; // Efficiency: Exit once a PC is found.
+                return; // Efficiency: Exit loop immediately after the first PC is notified.
             }
             oPC = GetNextObjectInArea(oArea);
         }
     }
 }
 
-// --- OCCUPANCY CHECK ---
-// Optimization for 1000+ Areas: Looping players is faster than objects.
+// --- OCCUPANCY CHECK (SCALABILITY GUARD) ---
+// Dense Annotation: In a 1000-area module, checking GetFirstPC() is faster 
+// than checking objects in every area. If no players are found, the Conductor stops.
 int GetIsAreaOccupied(object oArea) {
     object oPC = GetFirstPC();
     while (GetIsObjectValid(oPC)) {
+        // We ensure we aren't counting DMs as active players.
         if (GetArea(oPC) == oArea && !GetIsDM(oPC)) return TRUE;
         oPC = GetNextPC();
     }
     return FALSE;
 }
 
-// --- MOVEMENT 1: POPULATION (DSE v7.0) ---
-// Frequency: 30.0s | Offset: 0.0s
+// --- MOVEMENT 1: POPULATION (SPAWN/DESPAWN) ---
+// TIMING: 30s Repeating | OFFSET: 0.0s
 void Movement_Population(object oArea) {
-    // If the area is empty, we stop the engine to save CPU resources.
+    // PHASE 1: OCCUPANCY VERIFICATION
+    // If the area is empty, we "kill" the conductor loop to save CPU instructions.
     if (!GetIsAreaOccupied(oArea)) {
         DeleteLocalInt(oArea, "DOWE_CONDUCTOR_RUNNING");
-        DOWE_Debug("Performance Ended: Area empty. Conductor exiting.", oArea);
+        DOWE_Debug("Performance Ended: Area empty. Conductor standing down.", oArea);
         return;
     }
 
-    DOWE_Debug("Movement 1: Population Pulse (DSE v7.0)", oArea);
-    ExecuteScript("dse_engine_v7", oArea);
+    object oMod = GetModule();
+    
+    // PHASE 2: VARIABLE ARRAY LOOKUP (THE PLUG)
+    // We check the "Switchboard" on the Module to see if the Population Package is active.
+    if (GetLocalInt(oMod, "DOWE_PKG_POP_ACTIVE")) {
+        // We look up the name of the script we want to run.
+        string sScript = GetLocalString(oMod, "DOWE_PKG_POP_SCRIPT");
+        DOWE_Debug("Movement 1: Running Plug [" + sScript + "]", oArea);
+        
+        // Execute the script on the Area object.
+        ExecuteScript(sScript, oArea);
+    }
 
-    // Reschedule in 30 seconds.
+    // PHASE 3: RE-SCHEDULING
+    // Ensures the 30-second heartbeat remains consistent.
     DelayCommand(30.0, Movement_Population(oArea));
 }
 
-// --- MOVEMENT 2: BIOLOGICAL (Vitals) ---
-// Frequency: 30.0s | Offset: 10.0s
+// --- MOVEMENT 2: BIOLOGICAL (VITALS/BIO) ---
+// TIMING: 30s Repeating | OFFSET: 10.0s
 void Movement_Biological(object oArea) {
-    // Safety: Ensure the Conductor hasn't terminated in Movement 1.
+    // PHASE 1: SAFETY GUARD
+    // If Movement 1 turned the conductor off, we abort here.
     if (!GetLocalInt(oArea, "DOWE_CONDUCTOR_RUNNING")) return;
 
-    DOWE_Debug("Movement 2: Biological/Vitals Pulse.", oArea);
+    object oMod = GetModule();
+    
+    // PHASE 2: VARIABLE ARRAY LOOKUP (THE PLUG)
+    if (GetLocalInt(oMod, "DOWE_PKG_BIO_ACTIVE")) {
+        string sScript = GetLocalString(oMod, "DOWE_PKG_BIO_SCRIPT");
+        DOWE_Debug("Movement 2: Running Phased Plug [" + sScript + "]", oArea);
 
-    float fStagger = 0.0;
-    object oTarget = GetFirstObjectInArea(oArea);
-    while (GetIsObjectValid(oTarget)) {
-        // MICRO-STAGGERING: Processes each player 0.1s apart.
-        // This spreads the load across the 10-second movement window.
-        if (GetIsPC(oTarget)) {
-            fStagger += 0.1;
-            DelayCommand(fStagger, ExecuteScript("dowe_bio_core", oTarget));
+        // PHASE 3: PC-PHASE STAGGERING
+        // We do NOT run all players at once. We stagger them by 0.1s.
+        // This prevents the server from choking when 50+ players need updates.
+        float fStagger = 0.0;
+        object oTarget = GetFirstObjectInArea(oArea);
+        while (GetIsObjectValid(oTarget)) {
+            if (GetIsPC(oTarget)) {
+                fStagger += 0.1; // Add 100ms per player.
+                // Execute the plugin script ON the player object.
+                DelayCommand(fStagger, ExecuteScript(sScript, oTarget));
+            }
+            oTarget = GetNextObjectInArea(oArea);
         }
-        oTarget = GetNextObjectInArea(oArea);
     }
 
+    // PHASE 4: RE-SCHEDULING
     DelayCommand(30.0, Movement_Biological(oArea));
 }
 
-// --- MOVEMENT 3: ENVIRONMENTAL (Weather) ---
-// Frequency: 30.0s | Offset: 20.0s
+// --- MOVEMENT 3: ENVIRONMENTAL (WEATHER/VFX) ---
+// TIMING: 30s Repeating | OFFSET: 20.0s
 void Movement_Environmental(object oArea) {
+    // PHASE 1: SAFETY GUARD
     if (!GetLocalInt(oArea, "DOWE_CONDUCTOR_RUNNING")) return;
 
-    DOWE_Debug("Movement 3: Environmental/Weather Pulse.", oArea);
-    ExecuteScript("dowe_env_core", oArea);
+    object oMod = GetModule();
+    
+    // PHASE 2: VARIABLE ARRAY LOOKUP (THE PLUG)
+    if (GetLocalInt(oMod, "DOWE_PKG_ENV_ACTIVE")) {
+        string sScript = GetLocalString(oMod, "DOWE_PKG_ENV_SCRIPT");
+        DOWE_Debug("Movement 3: Running Plug [" + sScript + "]", oArea);
+        
+        // Execute weather/environment on the area object.
+        ExecuteScript(sScript, oArea);
+    }
 
+    // PHASE 3: RE-SCHEDULING
     DelayCommand(30.0, Movement_Environmental(oArea));
 }
 
-// --- MAIN INITIALIZER ---
-// Trigger: OnAreaEnter
+// --- MAIN INITIALIZER (PODIUM START) ---
+// TRIGGER: OnAreaEnter
 void main() {
     object oArea = OBJECT_SELF;
     object oEnter = GetEnteringObject();
 
-    // PHASE 1: GUARD CLAUSES
+    // STAGE 1: GUARD CLAUSES
+    // Only actual players ignite the engine. DMs and NPCs are ignored.
     if (!GetIsPC(oEnter) || GetIsDM(oEnter)) return;
 
-    // Check if the Conductor is already on the podium.
+    // We ensure only ONE Conductor is running per area.
     if (GetLocalInt(oArea, "DOWE_CONDUCTOR_RUNNING")) {
-        DOWE_Debug("Conductor active. Player entry added to symphony.", oArea);
+        DOWE_Debug("Engine already pulsing. Conductor remains on podium.", oArea);
         return;
     }
 
-    // PHASE 2: IGNITION
+    // STAGE 2: ENGINE IGNITION
     SetLocalInt(oArea, "DOWE_CONDUCTOR_RUNNING", TRUE);
-    DOWE_Debug("Raising Baton: Igniting the_conductor for " + GetName(oArea), oArea);
+    DOWE_Debug("Raising Baton: the_conductor online for " + GetName(oArea), oArea);
 
-    // PHASE 3: THE 10-SECOND STAGGERED STARTUP
-    // Movement 1: 0s | Movement 2: 10s | Movement 3: 20s
+    // STAGE 3: THE SYMPHONY OF OFFSETS
+    // By launching these with 10.0s gaps, they will stay out of sync forever.
+    // Movement 1 starts now (0s, 30s, 60s...)
     DelayCommand(0.0,  Movement_Population(oArea));
+    
+    // Movement 2 starts at 10 seconds (10s, 40s, 70s...)
     DelayCommand(10.0, Movement_Biological(oArea));
+    
+    // Movement 3 starts at 20 seconds (20s, 50s, 80s...)
     DelayCommand(20.0, Movement_Environmental(oArea));
 }
