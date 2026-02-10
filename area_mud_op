@@ -1,0 +1,74 @@
+/* ============================================================================
+    PROJECT: Dynamic Open World Engine (DOWE)
+    VERSION: 2.0 (Master Build)
+    PLATFORM: Neverwinter Nights: Enhanced Edition (NWN:EE)
+    MODULE: area_mud_op
+    
+    PILLARS:
+    1. Environmental Reactivity (Climate/Terrain/Context)
+    2. Biological Persistence (Hunger/Thirst/Fatigue)
+    3. Optimized Scalability (480-Player Phase-Staggering)
+    4. Intelligent Population (DSE v7.0 Integration)
+    
+    DESCRIPTION:
+    Scans and indexes all Objects, NPCs, and Shops into local arrays on the 
+    area object to ensure O(1) lookup speed for the command engine.
+   ============================================================================
+*/
+
+/* // ----------------------------------------------------------------------------
+// 2DA REFERENCE: (Virtual Layout for Area Data)
+// ----------------------------------------------------------------------------
+// This script utilizes internal area variables to simulate 2DA-style lists.
+// Variable Name            | Type   | Description
+// MUD_LIST_OBJ_[Index]     | Object | Stores Placeables (Nodes/Stations)
+// MUD_LIST_NPC_[Index]     | Object | Stores all Non-PC Creatures
+// MUD_LIST_SHOP_[Index]    | Object | Stores Creatures with 'has_shop' tag
+// ----------------------------------------------------------------------------
+*/
+
+void DOWE_OP_Debug(string sMsg, object oArea) {
+    if (GetGlobalInt("DOWE_DEBUG_SWITCH") == 1) {
+        SendMessageToPC(GetFirstPC(), "[DOWE OP DEBUG] " + GetName(oArea) + ": " + sMsg);
+    }
+}
+
+void main() {
+    object oArea = OBJECT_SELF;
+    if (GetLocalInt(oArea, "MUD_INDEX_COMPLETE")) return;
+
+    DOWE_OP_Debug("Phase 1: Starting Area Indexing...", oArea);
+
+    int nO = 0; int nN = 0; int nS = 0;
+    object oT = GetFirstObjectInArea(oArea);
+
+    // Triple-check loop for 480-player scalability (run once)
+    while (GetIsObjectValid(oT)) {
+        int nType = GetObjectType(oT);
+
+        // Category 1: Objects (Placeables/Mining/Crafting)
+        if (nType == OBJECT_TYPE_PLACEABLE) {
+            nO++;
+            SetLocalObject(oArea, "MUD_LIST_OBJ_" + IntToString(nO), oT);
+        }
+        // Category 2: NPCs & Category 3: Shops
+        else if (nType == OBJECT_TYPE_CREATURE && !GetIsPC(oT)) {
+            nN++;
+            SetLocalObject(oArea, "MUD_LIST_NPC_" + IntToString(nN), oT);
+            
+            // Check if NPC is marked as a Shopkeeper via local variable
+            if (GetLocalInt(oT, "IS_SHOPKEEPER")) {
+                nS++;
+                SetLocalObject(oArea, "MUD_LIST_SHOP_" + IntToString(nS), oT);
+            }
+        }
+        oT = GetNextObjectInArea(oArea);
+    }
+
+    SetLocalInt(oArea, "MUD_COUNT_OBJ", nO);
+    SetLocalInt(oArea, "MUD_COUNT_NPC", nN);
+    SetLocalInt(oArea, "MUD_COUNT_SHOP", nS);
+    SetLocalInt(oArea, "MUD_INDEX_COMPLETE", 1);
+    
+    DOWE_OP_Debug("Phase 2: Indexing Complete. Indexed " + IntToString(nO + nN) + " entities.", oArea);
+}
