@@ -1,0 +1,108 @@
+/* ============================================================================
+    PROJECT: Dynamic Open World Engine (DOWE)
+    VERSION: 2.0 (Master Build)
+    PLATFORM: Neverwinter Nights: Enhanced Edition (NWN:EE)
+    MODULE: bio_engine
+    
+    PILLARS:
+    1. Environmental Reactivity (Modifier-Aware Calculation)
+    2. Biological Persistence (Hunger/Thirst/Fatigue)
+    3. Optimized Scalability (Local Variable Caching)
+    
+    DESCRIPTION:
+    The biological heart of the survival engine. This script calculates the 
+    steady depletion of vitals. It is "Modifier-Aware," looking for signals 
+    from 'env_engine' (like desert heat or arctic cold) to adjust rates.
+    
+    PHASE-STAGGERING:
+    * Executed by 'the_conductor' Movement 2.
+    * OBJECT_SELF is the PC (staggered by 0.1s to protect the CPU).
+   ============================================================================
+*/
+
+// [2DA REFERENCE / CONSTANTS]
+// // This script utilizes the following Local Variables on the PC:
+// // VITAL_HUNGER, VITAL_THIRST, VITAL_FATIGUE (Range: 0 - 100)
+// // MOD_DECAY_HUNGER, MOD_DECAY_THIRST, MOD_DECAY_FATIGUE (External Modifiers)
+
+// --- DOWE DEBUG SYSTEM ---
+// Integrated tracer: Broadcasts biological telemetry if DEBUG_MODE is TRUE.
+void Bio_Debug(string sMsg, object oPC) {
+    if (GetLocalInt(GetModule(), "DOWE_DEBUG_MODE") == TRUE) {
+        SendMessageToPC(oPC, " [BIO_ENGINE] -> " + sMsg);
+    }
+}
+
+void main() {
+    // PHASE 1: TARGET VALIDATION
+    // The Conductor targets each PC individually.
+    object oPC = OBJECT_SELF;
+
+    // Safety Guard: Abort if the target is invalid, a DM, or dead.
+    if (!GetIsPC(oPC) || GetIsDM(oPC) || GetIsDead(oPC)) return;
+
+    // PHASE 2: DATA ACQUISITION (THE LOCAL CACHE)
+    // We retrieve the current percentage from the PC's memory.
+    int nHunger  = GetLocalInt(oPC, "VITAL_HUNGER");
+    int nThirst  = GetLocalInt(oPC, "VITAL_THIRST");
+    int nFatigue = GetLocalInt(oPC, "VITAL_FATIGUE");
+
+    // INITIALIZATION CHECK: Setup fresh vitals for new arrivals/logins.
+    if (GetLocalInt(oPC, "VITAL_INIT_COMPLETE") == FALSE) {
+        nHunger = 100;
+        nThirst = 100;
+        nFatigue = 100;
+        SetLocalInt(oPC, "VITAL_INIT_COMPLETE", TRUE);
+        Bio_Debug("New character detected. Initializing vitals to 100%.", oPC);
+    }
+
+    // PHASE 3: MODIFIER LOOKUP (ENVIRONMENTAL CONTEXT)
+    // These variables are injected by 'env_engine' during Movement 3.
+    // E.g., Desert Heat (No Hat) might set MOD_DECAY_THIRST to 5.
+    int nModH = GetLocalInt(oPC, "MOD_DECAY_HUNGER"); 
+    int nModT = GetLocalInt(oPC, "MOD_DECAY_THIRST");
+    int nModF = GetLocalInt(oPC, "MOD_DECAY_FATIGUE");
+
+    // PHASE 4: ATTRITION CALCULATION
+    // Base Rates: 1% Hunger/Fatigue, 2% Thirst per 30.0s pulse.
+    // These are added to the modifiers for the final delta.
+    int nHLoss = 1 + nModH;
+    int nTLoss = 2 + nModT;
+    int nFLoss = 1 + nModF;
+
+    nHunger  -= nHLoss;
+    nThirst  -= nTLoss;
+    nFatigue -= nFLoss;
+
+    // BOUNDARY CLAMPING: Prevent values from dipping below zero.
+    if (nHunger < 0)  nHunger = 0;
+    if (nThirst < 0)  nThirst = 0;
+    if (nFatigue < 0) nFatigue = 0;
+
+    // PHASE 5: CONSEQUENCE APPLICATION (THE PHYSICAL TOLL)
+    // If Hunger or Thirst hit 0, apply deprivation damage.
+    if (nHunger == 0 || nThirst == 0) {
+        // Apply 1 HP of non-lethal deprivation damage.
+        ApplyEffectToObject(DURATION_TYPE_INSTANT, EffectDamage(1, DAMAGE_TYPE_MAGICAL), oPC);
+        
+        // Visual feedback to warn the player of their imminent death.
+        FloatingTextStringOnCreature(" *You are physically failing from deprivation* ", oPC, FALSE);
+    }
+
+    // PHASE 6: PLAYER NOTIFICATION THRESHOLDS
+    // Warning system at 10% (The Hunger/Thirst "Danger Zone").
+    if (nHunger == 10)  SendMessageToPC(oPC, "Your stomach growls painfully. You are starving.");
+    if (nThirst == 10)  SendMessageToPC(oPC, "Your throat is parched. You are dehydrated.");
+    if (nFatigue == 10) SendMessageToPC(oPC, "Your eyelids are heavy. You are exhausted.");
+
+    // PHASE 7: CACHE UPDATING (STORAGE)
+    // Update the local variables. These will be read again in 30 seconds.
+    SetLocalInt(oPC, "VITAL_HUNGER",  nHunger);
+    SetLocalInt(oPC, "VITAL_THIRST",  nThirst);
+    SetLocalInt(oPC, "VITAL_FATIGUE", nFatigue);
+
+    // PHASE 8: TECHNICAL TRACER
+    // High-value technical data for the developer pulse logs.
+    Bio_Debug("Pulse: H["+IntToString(nHunger)+"] T["+IntToString(nThirst)+"] F["+IntToString(nFatigue)+"]", oPC);
+    if (nModT > 0) Bio_Debug("Env Modifier detected! Thirst acceleration active.", oPC);
+}
