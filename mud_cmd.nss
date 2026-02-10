@@ -1,32 +1,49 @@
 /* ============================================================================
     PROJECT: Dynamic Open World Engine (DOWE)
-    VERSION: 2.0 (Master Build)
+    VERSION: 2.1 (Master Build - Faction/Context Routing)
     PLATFORM: Neverwinter Nights: Enhanced Edition (NWN:EE)
     MODULE: mud_cmd
     
     PILLARS:
     3. Optimized Scalability (480-Player Phase-Staggering)
-    4. Intelligent Population (MUD-Style Command Routing)
+    4. Intelligent Population (Context-Aware Command Routing)
+    
+    DESCRIPTION:
+    The "Central Nervous System" for the DOWE MUD command suite. This script 
+    intercepts player chat, identifies the intent via mud_cmd.2da, and 
+    pre-processes targeting requirements (Distance/NPC Tag). 
+    
+    PHASE LOGIC:
+    1. Validation: Checks if the chat buffer is active.
+    2. Registry: Scans 2DA for the command keyword.
+    3. Context: Identifies the nearest NPC and validates SearchDist.
+    4. Delegation: Executes the specific handler script (ExecuteScript).
     
     SYSTEM NOTES:
-    * THE BRAIN: Scans 'mud_cmd.2da' to find the correct handler script.
-    * DECOUPLING: Keeps the quest/shop logic in separate memory spaces.
-    * 12-Character filename compliant. 
-    * Built for 2026 High-Readability Standard.
+    * TRIPLE-CHECKED: Logic staggered by 0.1s to prevent frame-hitching.
+    * FACTION READY: Hands off a validated NPC object to the quest/store engines.
+    * 12-Character filename compliant.
    ============================================================================
 */
 
-// // 2DA REPLICA: mud_cmd.2da
-// // Index | Command  | HandlerScript
-// // 0     | //hail   | mud_quest
-// // 1     | //buy    | mud_shop
-// // 2     | //stats  | mud_bio
+// [2DA REPLICA: mud_cmd.2da]
+// // Row | Command  | HandlerScript | NeedsTarget | SearchDist
+// // 0   | //hail   | mud_quest     | 1           | 5.0
+// // 1   | //buy    | mud_store     | 1           | 5.0
+// // 2   | //stats  | mud_bio       | 0           | 0.0
 
 #include "save_mgr"
 
 // --- PROTOTYPES ---
-// Logic for handling the hand-off to secondary scripts.
 void DOWE_CMD_ProcessCommand(object oPC, string sChat);
+
+// --- DOWE DEBUG SYSTEM ---
+// Integrated tracer: Broadcasts routing decisions to PCs if Debug Mode is active.
+void CMD_Debug(string sMsg, object oPC) {
+    if (GetLocalInt(GetModule(), "DOWE_DEBUG_MODE") == TRUE) {
+        SendMessageToPC(oPC, " [MUD_CMD] -> " + sMsg);
+    }
+}
 
 // ----------------------------------------------------------------------------
 // PHASE 1: THE GATEKEEPER (Initialization & Validation)
@@ -34,54 +51,86 @@ void DOWE_CMD_ProcessCommand(object oPC, string sChat);
 void main()
 {
     object oPC = OBJECT_SELF;
+    
     // Capture the string stored by the OnPlayerChat event.
     string sChat = GetLocalString(oPC, "DOWE_CHAT_BUFFER");
     
     // TRIPLE-CHECK: Ensure the buffer isn't empty and the player is valid.
     if (sChat == "" || !GetIsPC(oPC)) return;
 
-    // PHASING: We use a tiny delay (0.1s) to stagger the 2DA lookup.
-    // This prevents the Chat Event frame from hitching if 10 players type at once.
+    // PHASING: 0.1s delay to stagger 2DA lookup against the initial chat frame.
+    // This protects the 480-player heartbeat from I/O spikes.
     DelayCommand(0.1, DOWE_CMD_ProcessCommand(oPC, sChat));
 }
 
 // ----------------------------------------------------------------------------
-// PHASE 2: THE REGISTRY SCAN (2DA Lookup)
+// PHASE 2: REGISTRY SCAN & CONTEXTUAL TARGETING
 // ----------------------------------------------------------------------------
 void DOWE_CMD_ProcessCommand(object oPC, string sChat)
 {
     int i = 0;
-    string sCmd = Get2DAString("mud_cmd", "Command", i);
     int nFound = FALSE;
+    string sLowerChat = GetStringLowerCase(sChat);
 
-    // Loop through the 2DA registry to find the matching command.
+    // Initial 2DA read to prime the loop.
+    string sCmd = Get2DAString("mud_cmd", "Command", i);
+    
     while (sCmd != "")
     {
-        if (sChat == sCmd)
+        // GOLD STANDARD: Use SubString to allow for trailing arguments (e.g., //buy health)
+        if (FindSubString(sLowerChat, GetStringLowerCase(sCmd)) != -1)
         {
-            string sHandler = Get2DAString("mud_cmd", "HandlerScript", i);
+            // Retrieve routing metadata from 2DA.
+            string sHandler  = Get2DAString("mud_cmd", "HandlerScript", i);
+            int bNeedsTarget = StringToInt(Get2DAString("mud_cmd", "NeedsTarget", i));
+            float fMaxDist   = StringToFloat(Get2DAString("mud_cmd", "SearchDist", i));
             
-            // TECHNICAL ANNOTATION: ExecuteScript is used here to clear the 
-            // current script's memory (the 'Brain') before loading the next one.
-            DOWE_MGR_Debug("MUD_CMD: Validated '" + sChat + "'. Routing to: " + sHandler, oPC);
+            // PHASE 3: CONTEXT ACQUISITION (NPC Discovery)
+            // If the command requires an NPC (Social Commands), we locate them here.
+            if (bNeedsTarget)
+            {
+                object oNPC = GetNearestObject(OBJECT_TYPE_CREATURE, oPC);
+                float fDist = GetDistanceBetween(oPC, oNPC);
+                
+                // Validate proximity based on the 2DA's specific SearchDist.
+                if (GetIsObjectValid(oNPC) && fDist <= fMaxDist)
+                {
+                    // Technical Annotation: Storing the target object so the handler
+                    // script doesn't have to perform its own GetNearest scan.
+                    SetLocalObject(oPC, "DOWE_CHAT_TARGET", oNPC);
+                    CMD_Debug("Context Found: Targeting " + GetTag(oNPC), oPC);
+                }
+                else
+                {
+                    // Immersion: Notify player if they are shouting at thin air.
+                    SendMessageToPC(oPC, "There is no one nearby to hear that command.");
+                    DeleteLocalString(oPC, "DOWE_CHAT_BUFFER");
+                    return; 
+                }
+            }
+
+            // PHASE 4: HAND-OFF & EXECUTION
+            // Store the identified command and fire the sub-engine.
+            SetLocalString(oPC, "DOWE_LAST_CMD", sCmd); 
+            CMD_Debug("Routing '" + sCmd + "' to [" + sHandler + "]", oPC);
             
-            // PHASE 3: EXECUTION (Delegation to Subsystem)
+            // Gold Standard: ExecuteScript decouples logic from the Switchboard memory.
             ExecuteScript(sHandler, oPC);
             nFound = TRUE;
-            break;
+            break; 
         }
         i++;
         sCmd = Get2DAString("mud_cmd", "Command", i);
     }
 
     // ------------------------------------------------------------------------
-    // PHASE 4: CLEANUP & ERROR HANDLING
+    // PHASE 5: CLEANUP & ERROR HANDLING
     // ------------------------------------------------------------------------
     if (!nFound)
     {
-        DOWE_MGR_Debug("MUD_CMD: Command '" + sChat + "' not recognized in 2DA.", oPC);
+        CMD_Debug("MUD_CMD: Command '" + sChat + "' unrecognized in 2DA.", oPC);
     }
 
-    // Always clear the buffer after processing to prevent accidental double-triggers.
+    // Always flush the buffer to prevent double-triggers or memory leaks.
     DeleteLocalString(oPC, "DOWE_CHAT_BUFFER");
 }
