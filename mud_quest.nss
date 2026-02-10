@@ -1,6 +1,6 @@
 /* ============================================================================
     PROJECT: Dynamic Open World Engine (DOWE)
-    VERSION: 2.2 (Master Build - Faction & Rep Integrated)
+    VERSION: 2.3 (Master Build - Faction & Global Ban Integrated)
     PLATFORM: Neverwinter Nights: Enhanced Edition (NWN:EE)
     MODULE: mud_quest
     
@@ -14,12 +14,14 @@
     chat input against the mud_quest.2da registry. It performs a 
     multi-stage validation check:
     1. Proximity: Is the NPC close enough to hear?
-    2. Faction: Does the player meet the MinRep standing for this dialogue?
-    3. Requirements: Does the player have the necessary items or variables?
+    2. Global Social Check: Is the player blacklisted by this faction?
+    3. Faction Standing: Does the player meet the MinRep standing?
+    4. Requirements: Does the player have the necessary items or variables?
     
     SYSTEM NOTES:
     * TRIPLE-CHECKED: Logic is staggered (0.2s) to prevent CPU spikes.
     * JSON SYNC: Directly interfaces with the JSON_REPUTATION passport.
+    * PLUG-AND-PLAY: Communicates with fact_engine via DOWE_PRC variables.
     * 12-Character filename compliant.
    ============================================================================
 */
@@ -35,7 +37,6 @@
 void DOWE_QUEST_Process(object oPC, object oNPC, string sMsg);
 
 // --- DOWE DEBUG SYSTEM ---
-// Integrated tracer: Provides real-time feedback on why a quest line failed.
 void Quest_Debug(string sMsg, object oPC) {
     if (GetLocalInt(GetModule(), "DOWE_DEBUG_MODE") == TRUE) {
         SendMessageToPC(oPC, " [MUD_QUEST] -> " + sMsg);
@@ -60,8 +61,17 @@ void main()
         return;
     }
 
+    // --- PHASE 1.5: SOCIAL PLUG-IN RECONCILIATION ---
+    // TRIPLE-CHECK: If fact_engine has flagged this player as BANNED (AccessDenied),
+    // we abort the quest engine immediately to save CPU cycles.
+    if (GetLocalInt(oPC, "DOWE_PRC_DENY") == TRUE)
+    {
+        AssignCommand(oNPC, SpeakString("I have nothing to say to you. Begone."));
+        Quest_Debug("ABORT: PC is globally banned by this faction.", oPC);
+        return;
+    }
+
     // PHASING: Stagger the 2DA scan to protect the server's heartbeat.
-    // This spreads the workload across frames.
     DelayCommand(0.2, DOWE_QUEST_Process(oPC, oNPC, sMsg));
 }
 
@@ -74,10 +84,10 @@ void DOWE_QUEST_Process(object oPC, object oNPC, string sMsg)
     int i = 0;
     int nFound = FALSE;
 
-    // PERFORMANCE: Convert player message to lowercase once to save CPU cycles.
+    // PERFORMANCE: Convert player message to lowercase once.
     string sLowerMsg = GetStringLowerCase(sMsg);
 
-    // Initial 2DA read to prime the loop.
+    // Initial 2DA read.
     string sCheckTag = Get2DAString("mud_quest", "NPCTag", i);
     
     while (sCheckTag != "")
@@ -88,11 +98,10 @@ void DOWE_QUEST_Process(object oPC, object oNPC, string sMsg)
             // Keyword Case-Insensitivity Check.
             string sKey = GetStringLowerCase(Get2DAString("mud_quest", "Keyword", i));
             
-            // SUBSTRING SEARCH: Allows natural chat like "Hey, can I get some work?"
+            // SUBSTRING SEARCH: Support natural chat input.
             if (FindSubString(sLowerMsg, sKey) != -1)
             {
-                // PHASE 3: THE FACTION GATE
-                // Extract Faction ID and the Minimum Reputation required.
+                // PHASE 3: THE FACTION GATE (Specific Row Requirement)
                 int nFactID = StringToInt(Get2DAString("mud_quest", "FactID", i));
                 int nMinRep = StringToInt(Get2DAString("mud_quest", "MinRep", i));
 
@@ -100,7 +109,7 @@ void DOWE_QUEST_Process(object oPC, object oNPC, string sMsg)
                 json jReps = GetLocalJson(oPC, "JSON_REPUTATION");
                 int nPlayerRep = JsonIntPtr(JsonObjectGet(jReps, IntToString(nFactID)));
 
-                // REPUTATION CHECK: Score must be equal to or greater than MinRep.
+                // REPUTATION CHECK: Does player meet the specific line requirement?
                 if (nPlayerRep >= nMinRep)
                 {
                     // PHASE 4: REQUIREMENT VALIDATION (Item & Variable check)
@@ -115,24 +124,23 @@ void DOWE_QUEST_Process(object oPC, object oNPC, string sMsg)
                         // PHASE 5: EXECUTION (NPC Response)
                         string sText = Get2DAString("mud_quest", "NPCResponse", i);
                         
-                        // Technical Attribution: Force NPC to speak the string.
                         AssignCommand(oNPC, SpeakString(sText));
                         Quest_Debug("SUCCESS: Keyword '" + sKey + "' triggered for Faction " + IntToString(nFactID), oPC);
                         
                         nFound = TRUE;
-                        break; // Match found; exit loop to save resources.
+                        break; // Match found; exit loop.
                     }
                     else
                     {
-                        Quest_Debug("FAIL: PC has rank but lacks item '" + sReqItem + "' or variable.", oPC);
+                        Quest_Debug("FAIL: PC lacks item '" + sReqItem + "' or variable '" + sReqVar + "'.", oPC);
                     }
                 }
                 else
                 {
-                    // IMMERSION: If the player is too disliked, the NPC refuses to help.
+                    // IMMERSION: Reputation too low for this specific piece of info.
                     AssignCommand(oNPC, SpeakString("I don't trust you enough to discuss that."));
-                    Quest_Debug("REJECTION: Player Rep (" + IntToString(nPlayerRep) + ") too low for this line.", oPC);
-                    return; // NPC is finished with this PC.
+                    Quest_Debug("REJECTION: Player Rep (" + IntToString(nPlayerRep) + ") < MinRep (" + IntToString(nMinRep) + ")", oPC);
+                    return; 
                 }
             }
         }
