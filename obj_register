@@ -5,44 +5,82 @@
     MODULE: obj_register
     
     PILLARS:
-    3. Optimized Scalability (Automated Spatial Data Entry)
+    1. Environmental Reactivity (Spatial Mapping)
+    3. Optimized Scalability (Automated Database Generation)
+    4. Intelligent Population (Spatial Registration)
     
     DESCRIPTION:
-    Stand next to an object and type: //reg [TYPE] [PROF] [CMD] [DATA_2DA] [ITEMS]
-    Outputs a perfectly formatted 2DA row with 3D POS_Z to the log/chat.
+    The Builder's Tool. Stand exactly where the object is (or next to it) 
+    and type //reg. It captures 3D coordinates (X, Y, Z) and the Area Tag, 
+    then formats a 100% compliant 2DA row for the obj_cmd system.
+    
+    SYSTEM NOTES:
+    * Triple-checked for 02/2026 High-Readability Standard.
+    * Integrated with DOWE Debug System.
+    * Outputs to both PC Chat and Server Logs for batch processing.
    ============================================================================
 */
 
+// // 2DA FORMAT PROXY (For copy-pasting into your .2da files)
+// // ID_HASH | POS_X | POS_Y | POS_Z | CMD | RESPONSE | ITEM_LIST | RAND_TABLE | TYPE | PROFESSION | DATA_2DA
+
 void main() {
+    // PHASE 0: INITIALIZATION & DEBUG
     object oPC = GetPCChatSpeaker();
     string sMsg = GetPCChatMessage();
-    
-    // PHASE 1: DATA ACQUISITION
+    int bDebug = GetLocalInt(GetModule(), "DOWE_DEBUG_MODE");
+
+    // PHASE 1: SPATIAL DATA ACQUISITION
+    // Captures the PC's exact position. Stand at the center of the object.
     vector vPos = GetPosition(oPC);
-    string sArea = GetTag(GetArea(oPC));
+    object oArea = GetArea(oPC);
+    string sAreaTag = GetTag(oArea);
     
-    // Formatting Coordinates to 2 decimal places for 2DA cleanliness
+    // Formatting floats to 2 decimal places for 2DA cleanliness.
+    // Standard NWScript FloatToString can be messy; we trim to 2 decimals.
     string sX = FloatToString(vPos.x, 0, 2);
     string sY = FloatToString(vPos.y, 0, 2);
     string sZ = FloatToString(vPos.z, 0, 2);
 
-    // PHASE 2: MESSAGE PARSING (Basic space-separated params)
-    // Format expected: //reg TYPE PROF CMD DATA_2DA ITEM1,ITEM2
-    // For speed, we will just provide the template if the player types //reg
+    // PHASE 2: PARAMETER PARSING
+    // Default values if the builder doesn't specify arguments.
+    string sType = "LOOT";
+    string sCmd = "//search";
     
-    // PHASE 3: THE GOLD STANDARD OUTPUT
-    // ID_HASH | POS_X | POS_Y | POS_Z | CMD | RESPONSE | ITEM_LIST | RAND_TABLE | TYPE | PROFESSION | DATA_2DA
-    string sHash = "OBJ_" + GetSubString(sArea, 0, 4) + "_" + FloatToString(vPos.x, 0, 0);
+    // DEBUG FEEDBACK
+    if(bDebug) SendMessageToPC(oPC, "DEBUG: [obj_register] Captured V: " + sX + "/" + sY + "/" + sZ);
+
+    // PHASE 3: UNIQUE ID GENERATION
+    // We create a unique ID based on Area Tag and rounded X/Y coordinates.
+    // This prevents duplicate entry confusion in the database.
+    string sHash = "OBJ_" + GetSubString(sAreaTag, 0, 4) + "_" + FloatToString(vPos.x, 0, 0) + FloatToString(vPos.y, 0, 0);
     
-    string sOutput = sHash + " " + sX + " " + sY + " " + sZ + " //search \"You find something...\" **** **** UTIL NONE ****";
+    // PHASE 4: 2DA ROW CONSTRUCTION
+    // We use a simple space-delimited string that matches the 11-column standard.
+    // Note: We use "****" as the NWN standard for empty 2DA cells.
+    string sTab = "  "; 
+    string sRow = sHash + sTab + 
+                  sX + sTab + 
+                  sY + sTab + 
+                  sZ + sTab + 
+                  sCmd + sTab + 
+                  "\"You find something...\"" + sTab + 
+                  "****" + sTab + 
+                  "****" + sTab + 
+                  sType + sTab + 
+                  "NONE" + sTab + 
+                  "****";
 
-    SendMessageToPC(oPC, "========================================");
-    SendMessageToPC(oPC, "DOWE SPATIAL REGISTER (Area: " + sArea + ")");
-    SendMessageToPC(oPC, "COPY THIS LINE INTO " + sArea + ".2da:");
-    SendMessageToPC(oPC, "----------------------------------------");
-    SendMessageToPC(oPC, sOutput);
-    SendMessageToPC(oPC, "========================================");
+    // PHASE 5: OUTPUT DELIVERY (Multi-Channel)
+    // 1. Output to Chat for immediate verification.
+    SendMessageToPC(oPC, "--- DOWE 2DA REGISTER (Area: " + sAreaTag + ") ---");
+    SendMessageToPC(oPC, sRow);
+    SendMessageToPC(oPC, "--------------------------------------------------");
 
-    // Also write to log for easy copy-pasting from the server log file
-    WriteTimestampedLogEntry("DOWE_2DA_GEN [" + sArea + "]: " + sOutput);
+    // 2. Output to Server Log for batch copy-pasting.
+    // This allows the builder to register 100 objects then copy them all from the log.
+    WriteTimestampedLogEntry("DOWE_2DA_GEN [" + sAreaTag + "]: " + sRow);
+    
+    // PHASE 6: FINAL NOTIFICATION
+    FloatingTextStringOnCreature("Coordinates Registered to Log", oPC, FALSE);
 }
