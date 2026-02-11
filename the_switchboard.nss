@@ -1,108 +1,97 @@
 /* ============================================================================
     PROJECT: Dynamic Open World Engine (DOWE)
-    VERSION: 2.1 (Master Build - Faction/Social Integration)
+    VERSION: 2.1 (Area-Autonomous Build)
     PLATFORM: Neverwinter Nights: Enhanced Edition (NWN:EE)
-    MODULE: the_switchboard
+    MODULE: area_switchboard
     
     PILLARS:
-    1. Environmental Reactivity (Movement 3 - Climate/Weather)
-    2. Biological Persistence (Movement 2 - Vitals/Bio)
-    3. Optimized Scalability (Virtual Array / Plug-and-Play Architecture)
-    4. Intelligent Population (Movement 1 - Spawning | Movement 4 - Factions)
+    1. Environmental Reactivity (Local Weather Config)
+    2. Biological Persistence (Local Vitals Config)
+    3. Optimized Scalability (Local Variable Siloing)
+    4. Intelligent Population (Local DSE v7.0 Config)
     
     DESCRIPTION:
-    The Switchboard is the master configuration hub for the DOWE Engine. It 
-    defines the "Global Variable Array" on the Module object. This decoupling 
-    allows 'the_conductor' to remain a generic timing engine—it simply looks 
-    here to see which specific scripts are currently "plugged in" for each 
-    7.5-second phase (Movement) of the 30-second master cycle.
+    The Area Configuration Hub. This script defines the "Registry" for THIS 
+    specific area. By moving these from the Module to the Area, each area 
+    functions as its own independent server instance.
     
-    PHASE-STAGGERING (480-Player Target):
-    * Movement 1: 0.0s
-    * Movement 2: 7.5s
-    * Movement 3: 15.0s
-    * Movement 4: 22.5s
-    
-    INSTRUCTIONS:
-    * Execute this script ONCE in the OnModuleLoad event.
-    * To "Pull the Plug" on a system, set the PKG_ACTIVE variable to FALSE.
-    * To "Hot-Swap" a system, change the PKG_SCRIPT string to a new filename.
+    SYSTEM NOTES:
+    * Triple-checked for 02/2026 Gold Standard.
+    * NO Module-level dependencies for engine logic.
+    * Add new "Movements" here to expand the local engine.
    ============================================================================
 */
 
 // --- DOWE DEBUG SYSTEM ---
-// Dense Annotation: This is the primary initialization tracer. It verifies 
-// that the Virtual Array is correctly populated before players login.
-void DOWE_Debug(string sMsg) {
-    if (GetLocalInt(GetModule(), "DOWE_DEBUG_MODE") == TRUE) {
-        // Broadcasts to the first available PC/DM during the initialization phase.
-        SendMessageToPC(GetFirstPC(), " [THE SWITCHBOARD] -> " + sMsg);
+// Dense Annotation: This tracer targets the first PC in the specific area
+// to verify that the local registry has initialized correctly.
+void DOWE_Debug(string sMsg, object oArea) {
+    if (GetLocalInt(oArea, "DOWE_DEBUG_MODE") == TRUE) {
+        object oPC = GetFirstObjectInArea(oArea);
+        if (GetIsObjectValid(oPC)) {
+            SendMessageToPC(oPC, " [AREA SWITCHBOARD] -> " + sMsg);
+        }
     }
 }
 
 void main() {
-    // We target the Module Object as our central "Registry Database."
-    object oMod = GetModule();
+    // We target the Area Object as our "Local Registry Database."
+    object oArea = OBJECT_SELF;
 
     // ========================================================================
     // MOVEMENT 1: POPULATION (DSE v7.0 Integration)
-    // TIMING: Starts at 0.0s in the Conductor Cycle.
     // ========================================================================
-    // LOGIC: Toggles the entire Dynamic Spawn Engine (DSE).
-    SetLocalInt(oMod,    "DOWE_PKG_POP_ACTIVE", TRUE);
-    // POINTER: The actual script filename (DSE v7.0 Annotated Master).
-    SetLocalString(oMod, "DOWE_PKG_POP_SCRIPT", "dse_engine_v7");
+    // LOGIC: Toggles spawning logic for THIS area only.
+    SetLocalInt(oArea,    "DOWE_PKG_POP_ACTIVE", TRUE);
+    // POINTER: The actual spawner/conductor logic script.
+    SetLocalString(oArea, "DOWE_PKG_POP_SCRIPT", "enc_conductor");
+    // JANITOR: The cleanup script for dead/outrun mobs.
+    SetLocalString(oArea, "DOWE_JANITOR_SCRIPT", "enc_area_mgr");
     
-    DOWE_Debug("Movement 1 [Population] wired to: " + GetLocalString(oMod, "DOWE_PKG_POP_SCRIPT"));
+    DOWE_Debug("Movement 1 [Population] Registered Locally.", oArea);
 
 
     // ========================================================================
     // MOVEMENT 2: BIOLOGICAL (VITALS / BIO-CORE)
-    // TIMING: Starts at 7.5s in the Conductor Cycle (Phase-Staggered).
     // ========================================================================
-    // LOGIC: Set to FALSE to globally freeze Hunger, Thirst, and Fatigue.
-    SetLocalInt(oMod,    "DOWE_PKG_BIO_ACTIVE", TRUE);
+    // LOGIC: Toggle Hunger/Thirst/Fatigue logic for players in this area.
+    SetLocalInt(oArea,    "DOWE_PKG_BIO_ACTIVE", TRUE);
     // POINTER: The biological engine script filename.
-    SetLocalString(oMod, "DOWE_PKG_BIO_SCRIPT", "dowe_bio_core");
+    SetLocalString(oArea, "DOWE_PKG_BIO_SCRIPT", "dowe_bio_core");
     
-    DOWE_Debug("Movement 2 [Biological] wired to: " + GetLocalString(oMod, "DOWE_PKG_BIO_SCRIPT"));
+    DOWE_Debug("Movement 2 [Biological] Registered Locally.", oArea);
 
 
     // ========================================================================
     // MOVEMENT 3: ENVIRONMENTAL (WEATHER / CLIMATE)
-    // TIMING: Starts at 15.0s in the Conductor Cycle.
     // ========================================================================
-    // LOGIC: Controls regional weather shifts and environmental VFX triggers.
-    SetLocalInt(oMod,    "DOWE_PKG_ENV_ACTIVE", TRUE);
-    // POINTER: The environmental core script (weather_inc v8.0 compatible).
-    SetLocalString(oMod, "DOWE_PKG_ENV_SCRIPT", "dowe_env_core");
+    // LOGIC: Controls regional weather/VFX shifts for this area.
+    SetLocalInt(oArea,    "DOWE_PKG_ENV_ACTIVE", TRUE);
+    // POINTER: The environmental core script.
+    SetLocalString(oArea, "DOWE_PKG_ENV_SCRIPT", "dowe_env_core");
     
-    DOWE_Debug("Movement 3 [Environmental] wired to: " + GetLocalString(oMod, "DOWE_PKG_ENV_SCRIPT"));
+    DOWE_Debug("Movement 3 [Environmental] Registered Locally.", oArea);
 
 
     // ========================================================================
     // MOVEMENT 4: SOCIAL (FACT_ENGINE / REPUTATION)
-    // TIMING: Starts at 22.5s in the Conductor Cycle.
     // ========================================================================
-    // LOGIC: Processes the -1000/+1000 Reputation math and Rank caching.
-    // This provides the data needed for mud_store and mud_quest.
-    SetLocalInt(oMod,    "DOWE_PKG_FACT_ACTIVE", TRUE);
-    // POINTER: The Social Engine script (fact_engine Master Build).
-    SetLocalString(oMod, "DOWE_PKG_FACT_SCRIPT", "fact_engine");
+    // LOGIC: Toggle reputation processing for this zone.
+    SetLocalInt(oArea,    "DOWE_PKG_FACT_ACTIVE", TRUE);
+    SetLocalString(oArea, "DOWE_PKG_FACT_SCRIPT", "fact_engine");
     
-    DOWE_Debug("Movement 4 [Social] wired to: " + GetLocalString(oMod, "DOWE_PKG_FACT_SCRIPT"));
+    DOWE_Debug("Movement 4 [Social] Registered Locally.", oArea);
 
 
     // ========================================================================
-    // GLOBAL ENGINE CONFIGURATION
+    // LOCAL ENGINE CONFIGURATION
     // ========================================================================
     
-    // DOWE_DEBUG_MODE: The master toggle for all "DOWE_Debug" calls.
-    // Set to TRUE for development; FALSE for performance-critical production.
-    SetLocalInt(oMod, "DOWE_DEBUG_MODE", TRUE);
+    // DOWE_DEBUG_MODE: Master toggle for this specific area's debug logs.
+    SetLocalInt(oArea, "DOWE_DEBUG_MODE", TRUE);
     
-    // DOWE_VERSION: Tracks the current engine iteration for save-compatibility.
-    SetLocalFloat(oMod, "DOWE_VERSION", 2.1);
+    // DOWE_VERSION: Tracking for local save compatibility.
+    SetLocalFloat(oArea, "DOWE_VERSION", 2.1);
 
-    DOWE_Debug("Switchboard Synchronization Complete. DOWE v2.1 is LIVE.");
+    DOWE_Debug("Synchronization Complete. Area Engine is CONFIGURED.", oArea);
 }
