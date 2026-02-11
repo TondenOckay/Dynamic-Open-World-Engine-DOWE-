@@ -5,93 +5,77 @@
     MODULE: craft_cmd
     
     PILLARS:
-    1. Environmental Reactivity (Contextual Profession Interaction)
-    3. Optimized Scalability (480-Player Phase-Staggering)
+    3. Optimized Scalability (Area-Specific 2DA Throttling)
     
     DESCRIPTION:
-    The Gatekeeper for all professions. Handles Tool Checks, Skill Math, 
-    and the 10% Skill Gain. 
-    * GOLD STANDARD UPDATE: Now includes Auto-Return of items if Skill/Tool 
-      requirements are not met.
-    
-    SYSTEM NOTES:
-    * Triple-checked for CPU Frame-Budgeting.
-    * Integrated with the_switchboard (P&P Variables).
+    Universal listener for //open, //mine, //craft.
+    Dynamically maps the 2DA name to the Area Tag for ultra-fast lookup.
+    Example: Player in area "mine_level_1" triggers "mine_level_1.2da".
    ============================================================================
 */
 
-// // 2DA REFERENCE (GATHER_MINE, GATHER_WOOD, GATHER_HERB, CRAFT_SMITH, etc)
-// // Label | MinReq | BaseCh | ToolReq | Mode | Profession | Result | Item1 | Qty1 | ...
-
 void main() {
-    object oPC = GetLastUsedBy();
-    object oTarget = OBJECT_SELF;
-    
-    // PHASE 0: DEBUG INITIALIZATION
+    object oPC = GetPCChatSpeaker();
+    string sMsg = GetPCChatMessage();
+    object oArea = GetArea(oPC);
+    string sAreaTag = GetTag(oArea);
+    vector vPC = GetPosition(oPC);
     int bDebug = GetLocalInt(GetModule(), "DOWE_DEBUG_MODE");
-    if(bDebug) SendMessageToPC(oPC, "DEBUG: [craft_cmd] Interaction pulse on " + GetTag(oTarget));
 
-    // PHASE 1: ANTI-SPAM & CPU THROTTLING
-    if (GetLocalInt(oPC, "DOWE_ACT_BUSY")) {
-        if(bDebug) SendMessageToPC(oPC, "DEBUG: [craft_cmd] Blocked: Player Busy.");
+    // PHASE 1: DYNAMIC 2DA IDENTIFICATION
+    // We assume the 2DA is named EXACTLY the same as the Area Tag.
+    string sArea2DA = sAreaTag; 
+
+    // PHASE 2: SPATIAL SCAN (Throttled to current area data only)
+    int nRows = Get2DARowCount(sArea2DA);
+    if (nRows <= 0) {
+        if(bDebug) SendMessageToPC(oPC, "DEBUG: No 2DA found named: " + sArea2DA);
         return;
     }
-    SetLocalInt(oPC, "DOWE_ACT_BUSY", TRUE);
-    DelayCommand(1.2, DeleteLocalInt(oPC, "DOWE_ACT_BUSY"));
 
-    // PHASE 2: DATA ACQUISITION (the_switchboard CACHE)
-    string sProf  = GetLocalString(oTarget, "PP_PROFESSION"); 
-    int nMinReq   = GetLocalInt(oTarget, "PP_MIN_REQ");
-    int nBaseCh   = GetLocalInt(oTarget, "PP_BASE_CHANCE");
-    string sTool  = GetLocalString(oTarget, "PP_TOOL_TAG");
-    int nMode     = GetLocalInt(oTarget, "PP_CRAFT_MODE"); // 1=Gather, 2=Create
-    int nSkill    = GetLocalInt(oPC, "SKILL_" + sProf);
-
-    // PHASE 3: REQUIREMENT VALIDATION & AUTO-RETURN
-    int bFail = FALSE;
-    string sError = "";
-
-    // Check Tool Requirement
-    if (sTool != "" && !GetIsObjectValid(GetItemPossessedBy(oPC, sTool))) {
-        sError = "Proper tool required: " + sTool;
-        bFail = TRUE;
-    }
-    // Check Skill Floor
-    else if (nSkill < nMinReq) {
-        sError = "Skill insufficient. Need " + IntToString(nMinReq);
-        bFail = TRUE;
-    }
-
-    if (bFail) {
-        FloatingTextStringOnCreature(sError, oPC);
-        if(bDebug) SendMessageToPC(oPC, "DEBUG: [craft_cmd] Validation Failed. Executing Auto-Return.");
+    int i;
+    for(i = 0; i < nRows; i++) {
+        float fX = StringToFloat(Get2DAString(sArea2DA, "POS_X", i));
+        float fY = StringToFloat(Get2DAString(sArea2DA, "POS_Y", i));
         
-        // GOLD STANDARD: If it's a container (Mode 2), spit items back to PC bags
-        if (nMode == 2) {
-            object oItem = GetFirstItemInInventory(oTarget);
-            while (GetIsObjectValid(oItem)) {
-                CopyItem(oItem, oPC, TRUE);
-                DestroyObject(oItem);
-                oItem = GetNextItemInInventory(oTarget);
+        // Simple distance math to check if player is standing at the 2DA coordinates
+        float fDist = sqrt(pow(fX - vPC.x, 2.0) + pow(fY - vPC.y, 2.0));
+
+        if (fDist <= 3.0) {
+            // PHASE 3: PHYSICAL OBJECT MATCH
+            object oTarget = GetFirstObjectInArea(oArea);
+            while(GetIsObjectValid(oTarget)) {
+                vector vTarget = GetPosition(oTarget);
+                // Check for exact coordinate match to ensure we have the right placeable
+                if(vTarget.x == fX && vTarget.y == fY) {
+                    
+                    int nMode = Get2DAInt(sArea2DA, "MODE", i);
+                    
+                    // Logic Branch: Open vs Action
+                    if (sMsg == "//open") {
+                        if (nMode == 2) {
+                            if(bDebug) SendMessageToPC(oPC, "DEBUG: Opening Container via " + sArea2DA);
+                            AssignCommand(oPC, ActionInteractObject(oTarget));
+                        } else {
+                            FloatingTextStringOnCreature("This is a resource node, use //mine or //gather.", oPC);
+                        }
+                        return;
+                    }
+
+                    if (sMsg == "//mine" || sMsg == "//craft" || sMsg == "//gather") {
+                        // Cache 2DA data onto the object for the Core Engine
+                        SetLocalString(oTarget, "PP_PROFESSION", Get2DAString(sArea2DA, "PROFESSION", i));
+                        SetLocalString(oTarget, "PP_2DA_FILE", Get2DAString(sArea2DA, "DATA_2DA", i));
+                        SetLocalInt(oTarget, "PP_CRAFT_MODE", nMode);
+                        SetLocalInt(oTarget, "PP_2DA_ROW", i); // Pass row for deep lookup
+
+                        if(bDebug) SendMessageToPC(oPC, "DEBUG: Match found in " + sArea2DA + " at row " + IntToString(i));
+                        ExecuteScript("craft_engine_core", oTarget);
+                        return;
+                    }
+                }
+                oTarget = GetNextObjectInArea(oArea);
             }
         }
-        return;
     }
-
-    // PHASE 4: SUCCESS MATH (4% PROGRESSION RULE)
-    int nChance = nBaseCh + ((nSkill - nMinReq) * 4);
-    if (nChance > 95) nChance = 95; 
-    int bSuccess = (d100() <= nChance);
-
-    // PHASE 5: 10% PROGRESSION ROLL (Independent of Success)
-    if (d100() <= 10) {
-        SetLocalInt(oPC, "SKILL_" + sProf, nSkill + 1);
-        SendMessageToPC(oPC, "PROGRESS: Your " + sProf + " skill is now " + IntToString(nSkill + 1) + "!");
-        ExecuteScript("dowe_db_sync", oPC); 
-    }
-
-    // PHASE 6: MODULAR DELEGATION
-    SetLocalInt(oTarget, "TEMP_SUCCESS", bSuccess);
-    if (nMode == 1) ExecuteScript("craft_gather", oTarget);
-    else ExecuteScript("craft_create", oTarget);
 }
