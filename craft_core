@@ -1,0 +1,72 @@
+/* ============================================================================
+    PROJECT: Dynamic Open World Engine (DOWE)
+    VERSION: 2.0 (Master Build)
+    PLATFORM: Neverwinter Nights: Enhanced Edition (NWN:EE)
+    MODULE: craft_core
+    
+    DESCRIPTION:
+    Processes the physical interaction logic. Handles Skill math, tool checks,
+    and the Auto-Return of items for failed recipe/skill attempts.
+    
+    SYSTEM NOTES:
+    * High-readability standard.
+    * 4% success scaling per skill level above minimum.
+   ============================================================================
+*/
+
+void main() {
+    object oTarget = OBJECT_SELF;
+    object oPC = GetNearestCreature(CREATURE_TYPE_PLAYER_CHAR, PLAYER_CHAR_IS_PC, oTarget);
+    int bDebug = GetLocalInt(GetModule(), "DOWE_DEBUG_MODE");
+
+    // PHASE 1: DATA RECONSTRUCTION
+    string sProf     = GetLocalString(oTarget, "PP_PROFESSION");
+    string sData2DA  = GetLocalString(oTarget, "PP_2DA_FILE");
+    int nRow         = GetLocalInt(oTarget, "PP_2DA_ROW");
+    int nMode        = GetLocalInt(oTarget, "PP_CRAFT_MODE");
+    
+    int nSkill       = GetLocalInt(oPC, "SKILL_" + sProf);
+    
+    // Profession-specific data (from gather_mine.2da, craft_smith.2da, etc.)
+    int nMinReq      = Get2DAInt(sData2DA, "MinReq", nRow);
+    int nBaseCh      = Get2DAInt(sData2DA, "BaseCh", nRow);
+    string sTool     = Get2DAString(sData2DA, "ToolReq", nRow);
+
+    // PHASE 2: VALIDATION & AUTO-RETURN
+    // Check if player has the skill and the tool before anything else.
+    if (nSkill < nMinReq || (sTool != "" && !GetIsObjectValid(GetItemPossessedBy(oPC, sTool)))) {
+        FloatingTextStringOnCreature("Requirements not met: " + sProf, oPC);
+        
+        // If it's a container, eject items back to PC to clear the forge
+        if (nMode == 2) {
+            object oItem = GetFirstItemInInventory(oTarget);
+            while(GetIsObjectValid(oItem)) {
+                CopyItem(oItem, oPC, TRUE);
+                DestroyObject(oItem);
+                oItem = GetNextItemInInventory(oTarget);
+            }
+            if(bDebug) SendMessageToPC(oPC, "DEBUG: [craft_core] Requirement fail. Items returned to PC.");
+        }
+        return;
+    }
+
+    // PHASE 3: SUCCESS MATH (4% PROGRESSION)
+    int nChance = nBaseCh + ((nSkill - nMinReq) * 4);
+    if (nChance > 95) nChance = 95; // 5% Failure Floor
+    int bSuccess = (d100() <= nChance);
+
+    // PHASE 4: PROGRESSION ROLL (10% GAIN)
+    if (d100() <= 10) {
+        int nNewSkill = nSkill + 1;
+        SetLocalInt(oPC, "SKILL_" + sProf, nNewSkill);
+        SendMessageToPC(oPC, "PROGRESS: Your " + sProf + " skill is now " + IntToString(nNewSkill) + "!");
+        ExecuteScript("dowe_db_sync", oPC);
+    }
+
+    // PHASE 5: STAGGERED DELEGATION
+    SetLocalInt(oTarget, "TEMP_SUCCESS", bSuccess);
+    if (nMode == 1) ExecuteScript("craft_gather", oTarget);
+    else ExecuteScript("craft_create", oTarget);
+    
+    if(bDebug) SendMessageToPC(oPC, "DEBUG: [craft_core] Logic complete. Success: " + IntToString(bSuccess));
+}
